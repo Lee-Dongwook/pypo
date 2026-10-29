@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13, <4.0"
 dependencies = [
     "alembic>=1.20.1",
+    "cachetools>=7.2.6",
     "celery>=5.6.3",
     "fastapi>=0.162.0",
     "fastmcp>=4.1.4",
