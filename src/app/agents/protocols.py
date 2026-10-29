@@ -3,6 +3,7 @@ from typing import Protocol
 from .mcp.schemas import MCPServerSpec
 from .model import Agent
 
+
 class SubAgentResolver(Protocol):
     async def resolve(self, slugs: set[str], user_uuid: str | None = None) -> dict[str, Agent]:
         ...

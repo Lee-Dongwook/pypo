@@ -1,29 +1,22 @@
 from __future__ import annotations
 
 import logging
-import re
-import textwrap
-import time
-from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command
 
 from ...user.schemas import UserRead
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+logger = logging.getLogger(__name__)
 
-logging = logging.getLogger(__name__)
 
 async def build_supervisor_graph(
     config: RunnableConfig | None = None, caller: UserRead | None = None
 ) -> CompiledStateGraph:
+    """Compile the supervisor graph.
 
-    configurable = config.get("configurable", {})
-    start_time = time.perf_counter()
-
-    # WIP
+    WIP: the node set and the tool loop are not defined yet, so this raises instead
+    of returning a half-built graph. `config` carries runtime settings and `caller`
+    is the authenticated user that limits tool/agent visibility.
+    """
+    raise NotImplementedError("supervisor graph is not built yet")

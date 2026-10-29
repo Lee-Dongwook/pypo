@@ -4,6 +4,7 @@ from sqlalchemy import event
 
 from .utils import uuid7
 
+
 class UnifiedResourceType:
     AGENT = "agent"
 

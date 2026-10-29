@@ -44,5 +44,10 @@ def embedding_binding() -> tuple[str | None, str | None]:
 def embedding_endpoint(model_name: str) -> Embedding | None:
     host, key = embedding_binding()
     if host:
-        return Embedding(host, key, is_binding=True)
+        return Embedding(
+            base_url=host,
+            api_key=key,
+            is_binding=True,
+            embedding_model_name=model_name,
+        )
     return None

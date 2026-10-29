@@ -1,10 +1,19 @@
-.PHONY: dev install clean test
+.PHONY: dev install clean test lint migrate
 
 install:
 	uv run python scripts/patches.py
 
+test:
+	uv run pytest
+
+lint:
+	uv run ruff check .
+
+migrate:
+	uv run alembic upgrade head
+
 dev:
-	@if [-f .env]; then \
+	@if [ -f .env ]; then \
 		echo ".env detected"; \
 		set -a && . ./.env && set +a && ENV=development uv run python main.py; \
 	else \

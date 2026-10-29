@@ -1,8 +1,10 @@
 import copy
+
 from sqlalchemy import inspect
 
 from ..model import Agent
 from ..schemas import AgentResponse
+
 
 def _bakes_an_identity(agent_model: Agent | AgentResponse) -> bool:
     return not agent_model.workflow

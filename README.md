@@ -153,13 +153,26 @@ src/app/
 
 ```bash
 uv sync
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up -d
+uv run alembic upgrade head
 uv run python main.py
 ```
 
 - OpenAPI UI: <http://localhost:8000/docs>
 - OpenAPI YAML: <http://localhost:8000/openapi.yaml>
 
-Docker Compose, 마이그레이션, 온톨로지 MCP 서버는 로드맵 0~1단계에서 추가합니다.
+검사와 테스트:
+
+```bash
+uv run pytest
+uv run ruff check .
+```
+
+- 마이그레이션은 `migrations/`에 있고, 모델을 바꾼 뒤 `uv run alembic revision --autogenerate -m "..."`로 추가합니다.
+- CI는 lint → pytest → `alembic upgrade head` → `alembic check` 순서로 돌아 모델과 스키마의 드리프트를 잡습니다.
+- 온톨로지 MCP 서버, Supervisor 루프, 벡터 스토어 백엔드는 아직 구현 전입니다.
+
 
 ## 로드맵
 

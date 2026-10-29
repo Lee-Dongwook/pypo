@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
 
 class RecordsUnknownKeys(BaseModel):
     _unknown_keys: tuple[str, ...] = PrivateAttr(default=())
@@ -12,8 +14,12 @@ class AgentBase(BaseModel):
     slug: str = Field(...)
     description: str = Field(...)
 
+
 class AgentResponse(AgentBase):
     uuid: str
+    tenant_uuid: str
+    type: str
+    workflow: dict[str, Any] = Field(default_factory=dict)
     etag: str = Field(
         default="",
     )
@@ -22,6 +28,7 @@ class AgentResponse(AgentBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
 
 class AgentWorkflow(RecordsUnknownKeys):
     pass

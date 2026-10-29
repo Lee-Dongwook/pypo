@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import enum
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    Boolean,
-    Enum,
-    ForeignKey,
-    PrimaryKeyConstraint,
     String,
-    UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from src.app.shared.database import Base
 from src.app.shared.registry import AutoUUIDMixin, new_uuid
 from src.app.shared.utils import UtcDateTime

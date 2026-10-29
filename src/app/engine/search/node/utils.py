@@ -2,6 +2,7 @@ import textwrap
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+
 def format_search_results(results: list[dict]) -> str:
     if not results:
         return "Result not found."
@@ -9,10 +10,10 @@ def format_search_results(results: list[dict]) -> str:
     lines = []
     for index, result in enumerate(results, start=1):
         title = result.get("title", "-")
-        url = result.get("url", "http:example")
+        url = result.get("url", "-")
         description = result.get("description", "-")
         tags = result.get("tags", [])
-        score = result.get("score", 0.0)
+        score = result.get("score") or 0.0
         created_at = result.get("created_at")
 
         created_string = "null"
@@ -36,5 +37,5 @@ def format_search_results(results: list[dict]) -> str:
             """)
         )
 
-        header = f"Found {len(results)} related results: \n\n"
-        return header + "\n\n".join(lines)
+    header = f"Found {len(results)} related results: \n\n"
+    return header + "\n\n".join(lines)
