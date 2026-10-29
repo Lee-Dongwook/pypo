@@ -39,6 +39,9 @@ dev = [
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: requires a live Neo4j server (set NEO4J_TEST_URI)",
+]
 
 [tool.ruff]
 target-version = "py313"

@@ -270,19 +270,24 @@ urn:pypo:{tenant}:{ontology}:{version}:meta       # 적재 이력, checksum
 ```text
 (:Entity {
   iri, ontology_version, tenant,
-  labels, properties, inferred, source_graph
+  labels, label, label_lang, ...literal properties,
+  inferred, source_graph
 })
 -[:REL {
-  predicate, inferred, rule_id, source_graph
+  predicate, tenant, ontology_version, inferred, rule_id, source_graph
 }]->
 (:Entity)
 ```
 
-- 노드 키는 IRI입니다. `MERGE`로 멱등 upsert합니다.
+- 노드 키는 `(tenant, ontology_version, iri)`입니다. IRI만 키로 쓰면 v2를 투영할 때 v1 노드를 덮어쓰고, 테넌트가 공유하는 외부 IRI도 서로 침범합니다.
+- `MERGE`로 멱등 upsert합니다. 재적재 전에 `source_graph`(또는 버전 전체) 단위로 지웁니다.
+- SPARQL은 `ORDER BY ?s ?p ?o` + `OFFSET` 페이지네이션으로 전량을 읽습니다. `max_triples`를 넘으면 조용히 자르지 않고 실패합니다.
+- blank node는 안정적인 IRI 키가 없어 건너뛰고, 건너뛴 노드·유실된 관계 수를 결과에 보고합니다.
+- `rdf:type`이 없는 IRI도 stub 노드로 만듭니다. 그래야 외부 IRI로 향하는 관계가 `MATCH` 실패로 사라지지 않습니다.
 - `rdf:type`은 노드 라벨과 `labels` 속성에 함께 기록합니다.
-- literal은 속성으로, object property는 관계로 투영합니다.
+- literal은 노드 속성으로 평탄화하고, object property는 관계로 투영합니다. Neo4j는 맵을 속성값으로 저장할 수 없기 때문에 `properties` 같은 중첩 맵은 두지 않습니다. 숫자·불리언은 Neo4j 기본 타입으로 저장하고, 여러 값은 리스트로 두되 타입이 섞이면 문자열로 통일합니다.
 - 추론 트리플은 `inferred: true`, `rule_id`를 남깁니다.
-- 모든 노드/관계에 `ontology_version`을 붙여 버전별 질의와 재생성을 가능하게 합니다.
+- 모든 노드/관계에 `tenant`, `ontology_version`을 붙여 버전별 질의와 재생성을 가능하게 합니다.
 - 에이전트 도구는 read-only Neo4j 계정과 사전 정의된 Cypher 템플릿만 사용합니다.
 
 ## 6. MCP 도구 계약

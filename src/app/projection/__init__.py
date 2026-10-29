@@ -1,14 +1,16 @@
-from .graphdb_client import GraphDBClient, Triple
-from .mapper import Entity, ProjectionMapper, Rel
+from .graphdb_client import GraphDBClient, ProjectionTooLarge, Triple
+from .mapper import Entity, MapResult, ProjectionMapper, Rel
 from .neo4j_client import Neo4jProjectionClient
 from .service import ProjectionService
 
 __all__ = [
-    "GraphDBClient",
-    "Triple",
     "Entity",
-    "Rel",
-    "ProjectionMapper",
+    "GraphDBClient",
+    "MapResult",
     "Neo4jProjectionClient",
+    "ProjectionMapper",
     "ProjectionService",
+    "ProjectionTooLarge",
+    "Rel",
+    "Triple",
 ]

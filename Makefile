@@ -1,4 +1,4 @@
-.PHONY: dev install clean test lint migrate
+.PHONY: dev install clean test lint migrate neo4j-init
 
 install:
 	uv run python scripts/patches.py
@@ -11,6 +11,9 @@ lint:
 
 migrate:
 	uv run alembic upgrade head
+
+neo4j-init:
+	uv run python -m scripts.neo4j.init
 
 dev:
 	@if [ -f .env ]; then \
