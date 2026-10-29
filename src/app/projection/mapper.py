@@ -10,6 +10,7 @@ from .graphdb_client import Triple
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 
+
 @dataclass
 class Entity:
     iri: str
@@ -20,6 +21,7 @@ class Entity:
     inferred: bool = False
     source_graph: str = ""
 
+
 @dataclass
 class Rel:
     from_iri: str
@@ -29,8 +31,21 @@ class Rel:
     rule_id: str | None = None
     source_graph: str = ""
 
+
+def _local_name(iri: str) -> str:
+    if "#" in iri:
+        return iri.rsplit("#", 1)[-1]
+    return iri.rstrip("/").rsplit("/", 1)[-1]
+
+
 class ProjectionMapper:
-    def map(self, triples: list[Triple], tenant: str, ontology_version: str, source_graph: str) -> tuple[list[Entity], list[Rel]]:
+    def map(
+        self,
+        triples: list[Triple],
+        tenant: str,
+        ontology_version: str,
+        source_graph: str,
+    ) -> tuple[list[Entity], list[Rel]]:
         types: dict[str, list[str]] = defaultdict(list)
         literals: dict[str, dict[str, Any]] = defaultdict(dict)
         rels: list[Rel] = []
@@ -39,13 +54,16 @@ class ProjectionMapper:
             if triple.p == RDF_TYPE and triple.o_type == "uri":
                 types[triple.s].append(triple.o)
                 continue
-            
+
             if triple.o_type == "literal":
                 if triple.p == RDFS_LABEL:
                     literals[triple.s]["label"] = triple.o
-                literals[triple.s].setdefault(triple.p.split("#")[-1].split("/"))[-1]
+                    continue
+                key = _local_name(triple.p)
+                if key and key not in literals[triple.s]:
+                    literals[triple.s][key] = triple.o
                 continue
-            
+
             if triple.o_type == "uri":
                 rels.append(
                     Rel(
@@ -61,7 +79,11 @@ class ProjectionMapper:
         entities: list[Entity] = []
         for iri, type_list in types.items():
             props = dict(literals.get(iri, {}))
-            label = props.pop("label", type_list[-1].split("#")[-1].split("/")[-1] if type_list else iri)
+            if type_list:
+                fallback_label = _local_name(type_list[-1])
+            else:
+                fallback_label = iri
+            label = props.pop("label", fallback_label)
             entities.append(
                 Entity(
                     iri=iri,
@@ -73,4 +95,5 @@ class ProjectionMapper:
                     source_graph=source_graph,
                 )
             )
+
         return entities, rels

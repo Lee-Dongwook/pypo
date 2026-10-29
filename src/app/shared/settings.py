@@ -1,7 +1,12 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     triplestore_url: str = "http://localhost:7878"
     triplestore_query_endpoint: str = "/query"
@@ -13,5 +18,6 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://pypo:pypo@localhost:5432/pypo"
     redis_url: str = "redis://localhost:6379/0"
+
 
 settings = Settings()

@@ -1,0 +1,18 @@
+@prefix ex: <https://data.pypo.dev/test/ontology/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:Product a ex:Product ;
+    rdfs:label "Sample Product" ;
+    ex:hasSupplier ex:SupplierA .
+
+ex:SupplierA a ex:Supplier ;
+    rdfs:label "Supplier A" .
+
+ex:SupplierB a ex:Supplier ;
+    rdfs:label "Supplier B" .
+
+ex:Order a ex:Order ;
+    rdfs:label "Sample Order" ;
+    ex:orderedProduct ex:Product ;
+    ex:orderedBy ex:SupplierA .
