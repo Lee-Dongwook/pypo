@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+import enum
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import (
+    Boolean,
+    Enum,
+    ForeignKey,
+    PrimaryKeyConstraint,
+    String,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from src.app.shared.database import Base
+from src.app.shared.registry import AutoUUIDMixin, new_uuid
+from src.app.shared.utils import UtcDateTime
+
+
+class User(Base, AutoUUIDMixin):
+    __tablename__ = "user"
+
+    uuid: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=new_uuid,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(30))
+    email: Mapped[str] = mapped_column(String(255), unique=True)
