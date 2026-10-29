@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: pypo
+      POSTGRES_PASSWORD: pypo
+      POSTGRES_DB: pypo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  oxigraph:
+    image: ghcr.io/oxigraph/oxigraph:latest
+    command: serve --location /data --bind 0.0.0.0:7878
+    ports:
+      - "7878:7878"
+    volumes:
+      - oxi_data:/data
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  pg_data:
+  oxi_data:
+  neo4j_data:
