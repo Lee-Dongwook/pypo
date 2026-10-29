@@ -27,6 +27,7 @@ def normalize_model_name(model_name: str) -> tuple[str, str]:
 # ------ TimeZone ------
 class UtcDateTime(TypeDecorator[datetime]):
     impl: TypeEngine[Any] | type[TypeEngine[Any]] = DateTime(timezone=True)
+    cache_ok = True
 
 # ------ UUID ------
 class UUID(uuid.UUID):

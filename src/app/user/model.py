@@ -18,6 +18,9 @@ from src.app.shared.database import Base
 from src.app.shared.registry import AutoUUIDMixin, new_uuid
 from src.app.shared.utils import UtcDateTime
 
+if TYPE_CHECKING:
+    from src.app.chat.model import Thread
+
 
 class User(Base, AutoUUIDMixin):
     __tablename__ = "user"
@@ -41,3 +44,10 @@ class User(Base, AutoUUIDMixin):
     )
     name: Mapped[str] = mapped_column(String(30))
     email: Mapped[str] = mapped_column(String(255), unique=True)
+
+    threads: Mapped[list["Thread"]] = relationship(
+        "Thread",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
