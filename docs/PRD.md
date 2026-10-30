@@ -2,11 +2,12 @@
 
 # Card Benefit Optimizer
 
-> Version: 0.1.0  
+> Version: 0.2.0  
 > Status: Draft  
 > Last Updated: 2026-10-30  
 > Product Type: Personal Finance / Fintech  
-> Platform: Responsive Web Application
+> Platform: Responsive Web Application  
+> Strategy: [STRATEGY.md](STRATEGY.md) 1단계. 계산 규칙 상세는 [CARD_ALLOCATION_V0.md](CARD_ALLOCATION_V0.md)
 
 ---
 
@@ -14,11 +15,11 @@
 
 ### 1.1 Product Definition
 
-Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건과 현재 전월 실적을 분석하여, 예정된 결제에서 가장 유리한 카드를 추천하는 서비스다.
+Card Benefit Optimizer는 사용자가 보유한 신용카드의 실적 구간과 현재 실적을 분석해, **이번 달 남은 지출을 어느 카드에 몰아야 다음 달 혜택이 늘어나는지, 어느 카드는 채우지 말아야 하는지** 알려주는 월 1회 배분 계산기다.
 
-카드사마다 서로 다른 할인 조건, 전월 실적 구간, 할인한도 및 실적 제외 항목을 통합된 데이터 구조로 관리하고, 이를 기반으로 카드별 예상 혜택을 계산한다.
+카드사마다 서로 다른 실적 구간, 할인한도, 실적 제외 항목을 통합된 데이터 구조로 관리하고, 이를 기반으로 카드별로 다음 구간까지 남은 금액과 늘어나는 한도를 계산한다.
 
-사용자는 복잡한 카드 약관을 직접 이해하지 않아도 자신의 소비 상황에 적합한 결제 수단을 선택할 수 있다.
+핵심은 추천보다 **거절**이다. "3만 원 더 쓰면 2천 원 늘어납니다. 채우지 마세요"라고 말하는 서비스는 없고, 카드사 앱은 구조상 이 말을 할 수 없다.
 
 ### 1.2 Product Vision
 
@@ -30,7 +31,7 @@ Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건�
 
 ### 1.3 Core Value Proposition
 
-"내 카드 혜택을 이해하지 않아도, 가장 유리하게 사용할 수 있도록 도와준다."
+"어차피 쓸 돈을 어디에 몰고, 어디는 채우지 말아야 하는지 알려준다."
 
 ### 1.4 Product Principles
 
@@ -61,12 +62,11 @@ Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건�
 카드 상품 정보를 표준화하고 사용자가 입력한 정보를 바탕으로 다음 기능을 제공한다.
 
 - 보유 카드 등록 및 관리
-- 카드별 전월 실적 입력
-- 실적 구간 및 할인한도 분석
-- 결제 예정 정보 입력
-- 카드별 예상 할인액 계산
-- 예상 혜택 기준 카드 추천
-- 추천 결과의 계산 근거 제공
+- 카드별 이번 달 인정 실적 입력
+- 이번 달 남은 예상 지출 입력
+- 카드별 다음 구간까지 남은 금액과 늘어나는 한도 계산
+- 남은 지출 안에서 이득이 가장 큰 배분안 제시 (채울 카드 / 채우지 말 카드)
+- 배분 결과의 계산 근거 제공
 
 ### 2.3 Product Scope Boundary
 
@@ -105,8 +105,8 @@ Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건�
 ### 3.3 Primary User Story
 
 > As a credit card user,  
-> I want to compare the benefits of my registered cards before making a purchase,  
-> so that I can choose the most beneficial payment method.
+> I want to know which card to put my remaining spending on this month, and which cards to stop filling,  
+> so that I raise next month's benefits without spending more than I planned.
 
 ---
 
@@ -114,10 +114,10 @@ Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건�
 
 ### 4.1 Goals
 
-- 사용자가 보유한 여러 카드의 혜택을 한곳에서 비교한다.
-- 전월 실적에 따른 할인 조건과 한도를 정확하게 계산한다.
-- 예정된 결제에 적용할 수 있는 예상 할인액을 제공한다.
-- 가장 유리한 카드를 추천하고 추천 이유를 설명한다.
+- 사용자가 보유한 여러 카드의 실적 구간을 한곳에서 비교한다.
+- 현재 실적에 따른 구간과 한도를 정확하게 계산한다.
+- 남은 예상 지출 안에서 다음 달 한도가 가장 많이 늘어나는 배분안을 제시한다.
+- 채울 가치가 없는 카드는 분명하게 "채우지 마세요"라고 말한다.
 - 상품설명서 기반의 신뢰할 수 있는 카드 데이터를 제공한다.
 
 ### 4.2 Non-Goals (MVP)
@@ -125,6 +125,7 @@ Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건�
 다음 기능은 MVP에서 구현하지 않는다.
 
 - 카드사 계정 연동
+- 결제 직전 단건 카드 추천 (P1, 6.7)
 - 실제 카드 결제 내역 자동 수집
 - 금융 계좌 및 자산 연동
 - 사용자 카드 앱 화면 OCR
@@ -142,14 +143,13 @@ Card Benefit Optimizer는 사용자가 보유한 신용카드의 혜택 조건�
 
 ### 5.1 Main Flow
 
-1. 사용자가 서비스에 접속한다.
+1. 사용자가 서비스에 접속한다 (월 1회, 실적 마감 D-7 전후).
 2. 보유한 신용카드를 카탈로그에서 선택한다.
-3. 카드별 전월 실적을 입력한다.
-4. 필요한 경우 할인한도 사용 현황을 입력한다.
-5. 결제 예정 업종과 금액을 입력한다.
-6. 서비스가 등록된 카드별 예상 혜택을 계산한다.
-7. 예상 혜택을 기준으로 카드를 정렬한다.
-8. 사용자는 추천 결과와 계산 근거를 확인한다.
+3. 카드사 앱에 표시된 카드별 이번 달 인정 실적을 입력한다.
+4. 이번 달 남은 예상 지출을 입력한다.
+5. 서비스가 카드별 다음 구간까지 남은 금액과 늘어나는 한도를 계산한다.
+6. 남은 지출 안에서 이득이 가장 큰 배분안을 만든다.
+7. 사용자는 "이 카드에 쓰세요 / 이 카드는 채우지 마세요"와 계산 근거를 확인한다.
 
 ### 5.2 User Flow
 
@@ -159,32 +159,24 @@ Landing
    v
 My Cards
    |
-   +---- Add Card
-   |       |
-   |       v
-   |   Select Card Product
-   |       |
-   |       v
-   |   Input Previous Month Spend
+   +---- Add Card → Select Card Product
+   |
+   +---- Input This Month's Recognized Spend (per card)
    |
    v
-Optimizer
+Remaining Spend
    |
-   +---- Select Purchase Category
-   |
-   +---- Input Purchase Amount
+   +---- Input Planned Spend for the Rest of the Month
    |
    v
-Calculate Benefits
+Allocation Result
+   |
+   +---- Fill: 이 카드에 N원 더 쓰면 한도 +M원
+   +---- Hold off: 이번 달은 넘기지 마세요
+   +---- Other: 이미 최고 구간 / 올라가도 그대로 / 다른 카드가 더 이득
    |
    v
-Compare Registered Cards
-   |
-   v
-Recommendation Result
-   |
-   v
-Analysis Detail
+Analysis Detail (근거 조항, 상품설명서, 확인일)
 ```
 
 ---
@@ -240,77 +232,69 @@ Acceptance Criteria:
 - 카드 상품 정보와 사용자 입력 정보를 분리해야 한다.
 - 실적 정보가 없거나 불완전하면 계산 결과에 이를 표시해야 한다.
 
-### 6.3 Spending Input
+### 6.3 Remaining Spend Input
 
 **Priority: P0**
 
-사용자가 예정된 결제 정보를 입력할 수 있어야 한다.
+사용자가 이번 달 남은 예상 지출을 입력할 수 있어야 한다.
 
 Input Fields:
 
-| Field        | Description    |
-| ------------ | -------------- |
-| category     | 결제 업종      |
-| amount       | 결제 예정 금액 |
-| purchaseDate | 결제 예정일    |
+| Field         | Description                           |
+| ------------- | ------------------------------------- |
+| spends        | 카드별 이번 달 인정 실적              |
+| planned_spend | 이번 달 남은 예상 지출 (어차피 쓸 돈) |
 
 Requirements:
 
-- 업종 선택
-- 결제 금액 입력
-- 결제 예정일 입력
-- 잘못된 금액 및 입력값 검증
+- 카드별 인정 실적 입력 (총 사용액과 다르다는 안내 포함)
+- 남은 예상 지출 입력
+- 잘못된 금액 검증
 
 Acceptance Criteria:
 
-- 유효한 결제 정보를 입력할 수 있어야 한다.
-- 금액은 0보다 큰 원 단위 정수로 처리한다.
-- 지원하지 않는 업종은 별도로 표시한다.
+- 금액은 0 이상 원 단위 정수로 처리한다.
+- 남은 예상 지출은 "더 쓸 돈"이 아니라 "어차피 쓸 돈"이라고 안내한다.
 
-### 6.4 Benefit Calculation
+### 6.4 Tier and Gain Calculation
 
 **Priority: P0**
 
-등록된 카드의 혜택 조건을 기반으로 예상 할인액을 계산한다.
+카드별 현재 구간, 다음 구간까지 남은 금액, 늘어나는 한도를 계산한다.
 
 Requirements:
 
-- 전월 실적 충족 여부 확인
-- 실적 구간 확인
-- 결제 업종 적격성 확인
-- 적용 할인율 확인
-- 할인한도 확인
-- 예상 할인액 계산
+- 현재 실적 구간 확인 (경계값 포함)
+- 다음 구간까지 남은 금액 계산
+- 다음 구간 도달 시 늘어나는 혜택 계산
+- 할인율형 구간은 늘어나는 혜택을 하한으로 표시
+- 최상위 구간 도달 여부 표시
 - 계산 근거 반환
 
 Acceptance Criteria:
 
-- 카드 상품에 정의된 조건에 따라 계산해야 한다.
-- 할인한도를 초과하는 결과를 반환해서는 안 된다.
-- 실적 미충족 카드는 혜택 미적용 상태로 표시해야 한다.
-- 필요한 데이터가 부족한 경우 확정적인 계산 결과를 반환해서는 안 된다.
+- 카드 상품에 정의된 구간에 따라 계산해야 한다.
+- 구간이 올라가도 혜택이 늘지 않으면 "채울 이유 없음"으로 표시해야 한다.
+- 실적 정보가 없는 카드는 실적 0원으로 보지 않고 미입력으로 구분해야 한다.
 
-### 6.5 Card Optimization
+### 6.5 Allocation
 
 **Priority: P0**
 
-등록된 카드 중 예상 혜택이 가장 높은 카드를 추천한다.
+남은 예상 지출 안에서 늘어나는 혜택 합이 가장 큰 카드 조합을 고른다.
 
 Requirements:
 
-- 등록 카드 전체 계산 결과 비교
-- 예상 할인액 기준 정렬
-- 실적 미충족 카드 구분
-- 계산 불가능한 카드 구분
-- 추천 근거 제공
-- 동일 할인액에 대한 동률 처리
+- 남은 예상 지출을 넘지 않는 범위에서 최적 조합 선택
+- 동률이면 쓰는 금액이 적은 조합 선택 (남은 돈은 사용자에게 남긴다)
+- 선택되지 않은 카드는 이유와 함께 분류: 예산 초과(`over_budget`), 다른 카드가 더 이득(`lower_priority`), 올라가도 그대로(`no_gain`), 최고 구간(`top_tier`)
+- 채울 카드가 없으면 "추가로 쓰지 않는 것이 이득"이라고 명시
 
 Acceptance Criteria:
 
-- 추천 결과는 등록된 카드 범위 내에서만 제공한다.
-- 계산 가능한 카드와 계산 불가능한 카드를 구분한다.
-- 추천 이유를 사용자에게 설명할 수 있어야 한다.
-- 단순히 데이터가 없는 카드를 0원 할인 카드로 취급해서는 안 된다.
+- 배분에 쓰는 금액 합은 남은 예상 지출을 넘지 않는다.
+- 남은 예상 지출을 넘는 지출을 권하지 않는다.
+- 결과는 등록된 카드 범위 안에서만 제공한다.
 
 ### 6.6 Analysis Detail
 
@@ -330,35 +314,25 @@ Requirements:
 - 상품설명서 근거 조항
 - 상품설명서 URL 및 확인일
 
-### 6.7 Spending Tier Analysis
+### 6.7 Single Purchase Recommendation
 
 **Priority: P1**
 
-사용자의 현재 실적을 기반으로 다음 실적 구간까지 필요한 금액을 계산한다.
+결제 한 건(업종, 금액)을 입력하면 등록된 카드별 예상 할인액을 비교한다. 배분 결과를 보조하는 기능이며, 주력 기능으로 내세우지 않는다 (경쟁 서비스가 이미 제공하는 영역).
 
 Requirements:
 
-- 현재 실적 구간 표시
-- 다음 실적 구간 표시
-- 다음 구간까지 필요한 금액 계산
-- 다음 구간 도달 시 할인한도 증가량 계산
-- 최상위 구간 도달 여부 표시
+- 업종 적격성, 할인율, 잔여 할인한도 확인
+- 잔여 할인한도를 모르면 계산 불가로 표시 (8.4)
+- 계산 가능한 카드와 계산 불가 카드를 분리해 정렬 (8.6)
 
-중요 정책:
+현재 구현: `POST /card/optimize` (화면 미연결).
 
-다음 구간에 도달하기 위한 추가 소비를 무조건 권장하지 않는다. 사용자가 원래 계획한 소비를 기준으로 참고 정보를 제공한다.
+### 6.8 Multiple Purchase Allocation
 
-### 6.8 Multiple Card Allocation
+**Priority: P2**
 
-**Priority: P1**
-
-여러 결제 예정 건을 복수 카드에 배분하는 기능.
-
-- 복수 결제 계획 입력
-- 카드별 혜택 계산
-- 할인한도 중복 사용 방지
-- 전체 예상 혜택 비교
-- 카드별 결제 배분 제안
+여러 결제 예정 건을 할인한도 중복 없이 복수 카드에 배분하는 기능.
 
 ### 6.9 Card Recommendation
 
@@ -523,13 +497,20 @@ MIN(
 | Insufficient Data | 계산에 필요한 데이터 부족        |
 | Unsupported       | 현재 엔진에서 지원하지 않는 규칙 |
 
-### 8.6 Recommendation Policy
+### 8.6 Allocation Policy
 
-추천 순위는 실제 계산 가능한 예상 할인액을 기준으로 한다.
+배분은 다음 문제를 푼다 (상세: CARD_ALLOCATION_V0.md 2.3).
 
-1. 적용 가능한 예상 할인액이 높은 카드
-2. 예상 할인액이 동일하면 적용 조건이 명확한 카드
-3. 계산 불가능한 카드는 별도 그룹으로 표시
+```text
+maximize   Σ 늘어나는 혜택
+subject to Σ 다음 구간까지 남은 금액 <= 남은 예상 지출
+```
+
+1. 늘어나는 혜택 합이 큰 조합을 고른다.
+2. 동률이면 쓰는 금액이 적은 조합을 고른다.
+3. 선택되지 않은 카드는 이유와 함께 표시한다.
+
+단건 추천(6.7)의 정렬은 계산 가능한 카드를 할인액순으로, 실적 미충족 카드, 데이터 부족·계산 불가 카드 순으로 둔다. 동률이면 입력 순서를 유지한다.
 
 추천 결과는 실제 카드사 청구 결과를 보장하지 않는다.
 
@@ -578,21 +559,21 @@ MIN(
 
 ### 10.1 Technology Stack
 
-| Layer            | Technology                                      |
-| ---------------- | ----------------------------------------------- |
-| Frontend         | Next.js (App Router) + React                    |
-| Frontend Lang    | TypeScript                                      |
-| Styling          | Tailwind CSS                                    |
-| Server State     | TanStack Query                                  |
-| Client State     | Zustand                                         |
-| Backend          | FastAPI                                         |
-| Backend Lang     | Python                                          |
-| Validation       | Pydantic (도메인 경계)                          |
-| Unit Testing     | pytest                                          |
-| E2E Testing      | Playwright                                      |
-| Card Data        | 큐레이션 JSON (`samples/card_products.v0.json`) |
-| Monorepo         | pnpm workspace (web) + uv (Python)              |
-| Deployment       | 미정                                            |
+| Layer         | Technology                                      |
+| ------------- | ----------------------------------------------- |
+| Frontend      | Next.js (App Router) + React                    |
+| Frontend Lang | TypeScript                                      |
+| Styling       | Tailwind CSS                                    |
+| Server State  | TanStack Query                                  |
+| Client State  | Zustand                                         |
+| Backend       | FastAPI                                         |
+| Backend Lang  | Python                                          |
+| Validation    | Pydantic (도메인 경계)                          |
+| Unit Testing  | pytest                                          |
+| E2E Testing   | Playwright                                      |
+| Card Data     | 큐레이션 JSON (`samples/card_products.v0.json`) |
+| Monorepo      | pnpm workspace (web) + uv (Python)              |
+| Deployment    | 미정                                            |
 
 ### 10.2 Architecture Principles
 
@@ -632,13 +613,11 @@ samples/
 
 - 카드 상품 카탈로그
 - 보유 카드 등록 및 삭제
-- 카드별 전월 실적 입력
-- 결제 업종 및 금액 입력
-- 지원하는 혜택 규칙 계산
-- 예상 할인액 계산
-- 카드별 혜택 비교
-- 최적 카드 추천
-- 추천 근거 표시
+- 카드별 이번 달 인정 실적 입력
+- 이번 달 남은 예상 지출 입력
+- 카드별 다음 구간까지 남은 금액과 늘어나는 혜택 계산
+- 남은 지출 기준 배분안 ("채우세요 / 채우지 마세요")
+- 배분 근거 표시
 - 상품설명서 출처 표시
 - 모바일 및 데스크톱 지원
 
@@ -651,6 +630,7 @@ samples/
 - AI 추천
 - 포인트 및 마일리지
 - 연회비 손익 계산
+- 결제 직전 단건 추천 화면 (P1)
 - 복수 결제 자동 배분
 - 카드 상품 자동 수집
 
@@ -683,16 +663,16 @@ samples/
 
 ### 12.2 Initial Validation Targets
 
-초기 사용자 테스트를 위한 가설적 목표:
+STRATEGY.md 1단계 Go/No-Go 기준과 같다.
 
-| Metric                       |               Target |
-| ---------------------------- | -------------------: |
-| Card Registration Rate       |             60% 이상 |
-| Optimization Completion Rate |             70% 이상 |
-| Calculation Accuracy         |   지원 규칙에서 100% |
-| User Satisfaction            | 사용자 테스트로 측정 |
+| Metric                    |   Target |
+| ------------------------- | -------: |
+| 입력 완료율               | 80% 이상 |
+| 다음 달 재입력률          | 30% 이상 |
+| 예측 오차 (명세서 대조)   |  1% 미만 |
+| "채우지 마세요" 노출 비율 | 20% 이상 |
 
-위 수치는 검증된 시장 평균이 아닌 초기 제품 검증 목표다.
+재입력률이 30%를 밑돌면 카드 계산기를 접고 STRATEGY.md 2단계(지원금)로 넘어간다.
 
 ### 12.3 Core Validation Questions
 
@@ -710,14 +690,13 @@ MVP는 다음 조건을 충족하면 완료된 것으로 판단한다.
 
 ### Product
 
-- [ ] 최소 3개 카드 상품 등록
+- [ ] 최소 3개 실제 카드 상품 등록 (상품설명서 URL 포함)
 - [ ] 카드 상품 카탈로그 조회
 - [ ] 보유 카드 등록 및 삭제
-- [ ] 카드별 전월 실적 입력
-- [ ] 결제 업종 및 금액 입력
-- [ ] 카드별 예상 할인액 계산
-- [ ] 추천 카드 순위 표시
-- [ ] 추천 근거 제공
+- [x] 카드별 이번 달 인정 실적 입력
+- [x] 남은 예상 지출 입력
+- [x] 배분 결과 표시 (채우세요 / 채우지 마세요)
+- [x] 근거 조항 제공
 - [ ] 상품설명서 URL 및 확인일 표시
 
 ### Calculation Engine
@@ -744,37 +723,7 @@ MVP는 다음 조건을 충족하면 완료된 것으로 판단한다.
 
 ## 14. Future Roadmap
 
-### v0 — Card Benefit Calculator
-
-목표: 카드 혜택 계산의 정확성과 사용자 경험 검증.
-
-- 수동 카드 데이터 3~10개
-- 전월 실적 분석
-- 할인한도 계산
-- 단일 결제 기준 카드 비교
-- 규칙 기반 추천
-
-### v1 — Card Benefit Optimizer
-
-목표: 실제 소비 패턴을 반영한 혜택 최적화.
-
-- 여러 결제 계획 관리
-- 업종별 혜택 계산
-- 복수 카드 결제 배분
-- 포인트 및 캐시백 환산
-- 카드별 소비 패턴 분석
-- 상품 데이터 개정 감지
-
-### v2 — Personal Finance Assistant
-
-목표: 개인 소비 패턴에 기반한 지속적인 카드 사용 전략 지원.
-
-- 소비 내역 관리
-- 개인화된 카드 사용 전략
-- 신규 카드 추천
-- 상품설명서 자동 수집 및 변경 감지
-- 문서 자동 추출 및 사람의 검수
-- 장기적인 혜택 분석
+이 제품 이후의 단계(카드 + 지원금 충돌 지도, 근거 있는 혜택 질의, B2B 파일럿)는 [STRATEGY.md](STRATEGY.md) 3절을 따른다.
 
 ---
 
@@ -799,12 +748,10 @@ MVP 구현 전 확정해야 할 사항.
 
 ## 16. Final Product Statement
 
-Card Benefit Optimizer는 복잡한 신용카드 혜택을 사용자의 소비 의사결정으로 전환하는 서비스다.
+Card Benefit Optimizer는 이번 달 남은 지출을 어디에 몰고, 어디는 채우지 말아야 하는지를 근거와 함께 알려주는 서비스다.
 
-카드 상품 데이터를 표준화하고, 사용자가 입력한 전월 실적과 예정된 결제 정보를 분석하여 가장 유리한 결제 카드를 추천한다.
+카드 상품 데이터를 표준화하고, 사용자가 입력한 현재 실적과 남은 예상 지출을 분석해 다음 달 혜택이 가장 많이 늘어나는 배분안을 제시한다.
 
-초기에는 검증된 소수의 카드 상품을 기반으로 계산 정확성과 사용자 경험을 확보한다.
-
-이후 실제 소비 패턴 분석, 복수 카드 최적화, 상품 데이터 자동 갱신을 단계적으로 확장한다.
+이 제품은 pypo 엔진의 첫 계단이다. 여기서 검증한 계산 정확도와 근거 구조를 다음 단계의 혜택 충돌 지도와 B2B 엔진으로 넓힌다.
 
 **The goal is not to make users spend more. The goal is to help them get more value from what they already spend.**
