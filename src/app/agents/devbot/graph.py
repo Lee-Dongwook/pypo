@@ -15,7 +15,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from . import github, workspace
-from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations
+from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations, removed_tests
 from .issue import Task, parse_task
 
 Outcome = Literal["passed", "question", "failed", "no_task"]
@@ -88,6 +88,9 @@ def build_graph(
                                    **state["context"]))
         edits = workspace.parse_file_blocks(text)
         problems = path_violations(edits, state["task"].files, root) if edits else ["출력 형식에 맞는 파일 블록이 없음"]
+        for path, content in edits.items() if not problems else ():
+            if (root / path).exists() and (gone := removed_tests((root / path).read_text(encoding="utf-8"), content)):
+                problems.append(f"{path}: 기존 테스트를 지움 ({', '.join(gone)}). 파일 전체를 빠짐없이 다시 쓸 것")
         if problems:
             return _retry(state, "출력이 규칙을 어겼습니다:\n- " + "\n- ".join(problems))
         workspace.apply(root, edits)

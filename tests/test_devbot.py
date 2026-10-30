@@ -6,7 +6,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from src.app.agents.devbot import workspace
 from src.app.agents.devbot.graph import build_graph
-from src.app.agents.devbot.guards import MAX_ATTEMPTS, path_violations
+from src.app.agents.devbot.guards import MAX_ATTEMPTS, path_violations, removed_tests
 from src.app.agents.devbot.issue import parse_task
 
 REPO = Path(__file__).resolve().parents[1]
@@ -120,6 +120,32 @@ def test_ambiguous_issue_ends_with_a_question(tmp_path: Path) -> None:
 
     assert state["outcome"] == "question"
     assert state["message"] == "음수도 다뤄야 하나요?"
+
+
+def test_deleting_existing_tests_is_rejected_even_if_pytest_passes(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    wipe = "=== FILE: tests/test_calc.py ===\ndef test_new():\n    assert True\n=== END ==="
+    body = BODY.replace("calc.py\n\n### 완료", "calc.py\ntests/test_calc.py\n\n### 완료")
+    graph = build_graph(
+        FakeListChatModel(responses=["- 테스트를 바꾼다", wipe, f"{FIXED}\n{wipe}".replace("def test_new", "def test_add")]),
+        repo,
+        base="HEAD",
+        issues=lambda number: [{"number": 1, "title": "t", "body": body}],
+    )
+
+    state = graph.invoke({"issue": None})
+    workspace.remove(repo, Path(state["worktree"]))
+
+    # 첫 시도는 형식·경로가 맞고 pytest도 통과하지만, test_add를 지워서 거부된다.
+    assert state["outcome"] == "passed"
+    assert state["attempts"] == 1
+
+
+def test_removed_tests_lists_only_deleted_test_functions() -> None:
+    before = "def test_a():\n    pass\n\nasync def test_b():\n    pass\n\ndef helper():\n    pass\n"
+
+    assert removed_tests(before, "def test_b():\n    pass\n") == ["test_a"]
+    assert removed_tests(before, before + "def test_c():\n    pass\n") == []
 
 
 def test_touching_forbidden_paths_fails_after_max_attempts(tmp_path: Path) -> None:

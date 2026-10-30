@@ -5,6 +5,7 @@ pypo는 이 파일을 수정할 수 없다.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,12 @@ FORBIDDEN = (
 NEW_TEST_PATTERN = "tests/test_*.py"
 MAX_ATTEMPTS = 3
 MAX_DIFF_LINES = 400
+
+
+def removed_tests(before: str, after: str) -> list[str]:
+    """수정 후 사라진 테스트 함수. 테스트를 지우면 pytest는 실패하지 않으므로 따로 막는다."""
+    pattern = re.compile(r"^(?:async )?def (test_\w+)", re.M)
+    return sorted(set(pattern.findall(before)) - set(pattern.findall(after)))
 
 
 def normalize(path: str) -> str:
