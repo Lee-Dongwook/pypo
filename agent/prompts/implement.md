@@ -30,22 +30,23 @@ $feedback
 - 파일 끝에 덧붙이거나 새 파일을 만들 때는 SEARCH를 비운다.
 - 한 파일에 블록을 여러 개 써도 된다. 블록 밖에는 아무것도 쓰지 않는다.
 
-예시: import 한 줄을 추가하고, 파일 끝에 테스트를 덧붙이기
+예시는 **형식만** 보여 준다. 예시의 파일 경로, 함수, 코드를 쓰지 않는다. 이슈의 완료 기준을 하나씩 모두 코드로 옮긴다.
 
-=== FILE: tests/test_example.py ===
+=== FILE: lib/shapes.py ===
 <<<<<<< SEARCH
-from src.app.card.calculator import (
-    evaluate_card,
+def area(w, h):
+    return w * h
 =======
-from src.app.card.calculator import (
-    analyze_card_tier,
-    evaluate_card,
+def area(w, h):
+    if w < 0 or h < 0:
+        raise ValueError("negative size")
+    return w * h
 >>>>>>> REPLACE
 <<<<<<< SEARCH
 =======
 
 
-def test_new_behavior() -> None:
-    assert analyze_card_tier(make_card(), 0).next_threshold == 300_000
+def perimeter(w, h):
+    return 2 * (w + h)
 >>>>>>> REPLACE
 === END ===

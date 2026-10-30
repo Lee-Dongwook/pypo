@@ -143,6 +143,12 @@ def diff(root: Path) -> str:
     return _git(root, "diff", "--cached")
 
 
+def missing_tests(root: Path, names: list[str]) -> list[str]:
+    """이슈가 이름으로 요구한 테스트 중 `tests/`에 없는 것."""
+    source = "\n".join(file.read_text(encoding="utf-8") for file in (root / "tests").rglob("test_*.py"))
+    return [name for name in names if not re.search(rf"^(?:async )?def {name}\b", source, re.M)]
+
+
 def run_checks(root: Path) -> list[Check]:
     """ruff와 pytest. 의존성을 다시 설치하지 않도록 지금 실행 중인 가상환경을 쓴다."""
     # ponytail: 웹(apps/, packages/)을 건드리는 이슈는 worktree에 node_modules가 없어 typecheck를 못 돌린다. M2 전에 해결.

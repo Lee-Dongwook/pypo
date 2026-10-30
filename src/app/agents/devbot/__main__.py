@@ -44,6 +44,8 @@ def main() -> None:
     print(f"[pypo] 결과: {state['outcome']} ({state.get('message', '')[:500]})")
     if state.get("plan"):
         print(f"[pypo] 계획:\n{state['plan']}")
+    for line in state.get("history", []):
+        print(f"[pypo] {line[:800]}")
     for check in state.get("checks", []):
         print(f"[pypo] {check.name}: {'통과' if check.ok else '실패'}")
 

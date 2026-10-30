@@ -202,3 +202,32 @@ def test_touching_forbidden_paths_fails_after_max_attempts(tmp_path: Path) -> No
     assert state["outcome"] == "failed"
     assert state["attempts"] == MAX_ATTEMPTS
     assert "수정 금지 경로" in state["message"]
+
+
+def test_fenced_question_is_still_a_question(tmp_path: Path) -> None:
+    state = run(make_repo(tmp_path / "repo"), ["```plaintext\nQUESTION: 음수도 다뤄야 하나요?\n```"])
+
+    assert state["outcome"] == "question"
+
+
+def test_tests_named_in_the_issue_must_exist(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    body = BODY.replace("### 통과해야 할 테스트 (선택)\n\n_No response_", "### 통과해야 할 테스트 (선택)\n\ntest_add_zero")
+    added = FIXED.replace(
+        "=== END ===",
+        "=== END ===\n=== FILE: tests/test_zero.py ===\n<<<<<<< SEARCH\n=======\nfrom calc import add\n\n\ndef test_add_zero():\n"
+        "    assert add(0, 0) == 0\n>>>>>>> REPLACE\n=== END ===",
+    )
+    graph = build_graph(
+        FakeListChatModel(responses=["- 고친다", FIXED, added]),
+        repo,
+        base="HEAD",
+        issues=lambda number: [{"number": 1, "title": "t", "body": body}],
+    )
+
+    state = graph.invoke({"issue": None})
+    workspace.remove(repo, Path(state["worktree"]))
+
+    assert state["outcome"] == "passed"
+    assert state["attempts"] == 1
+    assert "test_add_zero" in state["history"][0]

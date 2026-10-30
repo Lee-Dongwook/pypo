@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import operator
+import re
 from collections.abc import Callable
 from pathlib import Path
 from string import Template
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
@@ -17,6 +19,8 @@ from langgraph.graph.state import CompiledStateGraph
 from . import github, workspace
 from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations, removed_tests
 from .issue import Task, parse_task
+
+_FENCE = re.compile(r"^```[\w-]*\n|\n?```\s*$", re.M)
 
 Outcome = Literal["passed", "question", "failed", "no_task"]
 IssueSource = Callable[[int | None], list[dict[str, Any]]]
@@ -33,6 +37,7 @@ class DevbotState(TypedDict, total=False):
     checks: list[workspace.Check]
     outcome: Outcome
     message: str
+    history: Annotated[list[str], operator.add]
 
 
 def _prompt(repo: Path, name: str, **values: str) -> str:
@@ -77,7 +82,8 @@ def build_graph(
         return {"outcome": "no_task", "message": f"가져갈 수 있는 이슈가 없습니다.{reason}"}
 
     def plan(state: DevbotState) -> DevbotState:
-        text = _ask(model, _prompt(repo, "plan", **state["context"])).strip()
+        # 작은 모델은 답을 코드 블록으로 감싸곤 한다. 감싼 표시를 벗겨야 QUESTION을 알아본다.
+        text = _FENCE.sub("", _ask(model, _prompt(repo, "plan", **state["context"]))).strip()
         if text.startswith("QUESTION:"):
             return {"outcome": "question", "message": text.removeprefix("QUESTION:").strip()}
         return {"plan": text}
@@ -115,13 +121,21 @@ def build_graph(
         if (lines := workspace.diff_lines(root)) > MAX_DIFF_LINES:
             return {**_retry(state, f"변경이 {lines}줄로 상한 {MAX_DIFF_LINES}줄을 넘습니다. 필요한 부분만 바꾸세요."),
                     "checks": checks}
+        if missing := workspace.missing_tests(root, re.findall(r"test_\w+", state["task"].tests)):
+            return {**_retry(state, f"이슈가 요구한 테스트가 없습니다: {', '.join(missing)}. 이 이름으로 테스트를 만드세요."),
+                    "checks": checks}
         return {"outcome": "passed", "checks": checks, "message": f"{state['attempts'] + 1}번째 시도에서 통과"}
 
     def _retry(state: DevbotState, feedback: str) -> DevbotState:
         attempts = state["attempts"] + 1
+        log = [f"{attempts}번째 시도 실패: {feedback}"]
         if attempts >= MAX_ATTEMPTS:
-            return {"attempts": attempts, "outcome": "failed", "message": feedback, "feedback": feedback}
-        return {"attempts": attempts, "feedback": f"\n# 이전 시도 실패 ({attempts}/{MAX_ATTEMPTS})\n\n{feedback}\n"}
+            return {"attempts": attempts, "outcome": "failed", "message": feedback, "feedback": feedback, "history": log}
+        return {
+            "attempts": attempts,
+            "feedback": f"\n# 이전 시도 실패 ({attempts}/{MAX_ATTEMPTS})\n\n{feedback}\n",
+            "history": log,
+        }
 
     def after_implement(state: DevbotState) -> str:
         if state.get("outcome"):
