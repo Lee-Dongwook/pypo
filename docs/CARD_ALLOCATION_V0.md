@@ -168,3 +168,37 @@ subject to Σ g <= P
 2. 포인트형 카드를 v0에 넣을지. 환산 기준이 애매하면 원 단위 할인형만 넣는 편이 안전합니다.
 3. 다음 달 알림을 앱 푸시로 할지, 문자로 할지. 문자는 이탈률이 낮지만 비용과 동의가 붙습니다.
 4. 재입력률이 30% 근처일 때 판단. 25%면 유지할지 접을지 기준을 미리 정해야 합니다.
+
+## 8. 실행 방법
+
+```bash
+# 백엔드
+.venv/bin/python -m uvicorn main:app --port 8000
+
+# 프론트엔드
+pnpm install
+pnpm dev            # http://localhost:3000
+```
+
+| 엔드포인트 | 역할 |
+|---|---|
+| `GET /card/products` | 큐레이션된 카드 목록 |
+| `POST /card/plan` | `{spends, planned_spend}` → 배분 결과 |
+
+Next.js는 `/api/*` 요청을 `API_BASE_URL`(기본 `http://127.0.0.1:8000`)로 프록시합니다. 브라우저에서 API를 직접 호출할 때만 CORS가 필요합니다.
+
+| 환경변수 | 기본값 | 용도 |
+|---|---|---|
+| `CARD_CATALOG_PATH` | `samples/card_products.v0.json` | 약관 큐레이션 파일 교체 |
+| `API_BASE_URL` | `http://127.0.0.1:8000` | Next 프록시 대상 |
+| `CORS_ALLOW_ORIGINS` | `http://localhost:3000,...` | 허용 오리진 |
+
+### 워크스페이스 구성
+
+```text
+apps/web            Next.js 15 App Router · TypeScript · Tailwind v4
+                    Zustand(입력 상태) · TanStack Query(카탈로그·계산 요청)
+packages/api-client API 타입과 호출 함수 (Pydantic 모델과 수동 동기화)
+```
+
+`src/app/card/api.py`의 응답 모델을 바꾸면 `packages/api-client/src/index.ts`도 같이 고쳐야 합니다. 아직 코드 생성은 없습니다.

@@ -1,0 +1,41 @@
+{
+  "as_of": "2026-10-30",
+  "note": "구조 예시 데이터입니다. 실제 상품명과 수치는 상품설명서를 보고 큐레이션해야 합니다.",
+  "cards": [
+    {
+      "card_id": "example-a",
+      "name": "예시 A",
+      "issuer": "예시카드",
+      "as_of": "2026-10-30",
+      "excluded_spend_note": "세금, 공과금, 상품권 구매는 실적에서 제외됩니다.",
+      "tiers": [
+        { "spend_threshold": 300000, "discount_cap": 15000, "clause": "상품설명서 2쪽 · 전월 실적 30만 원 이상" },
+        { "spend_threshold": 500000, "discount_cap": 20000, "clause": "상품설명서 2쪽 · 전월 실적 50만 원 이상" },
+        { "spend_threshold": 1000000, "discount_cap": 30000, "clause": "상품설명서 3쪽 · 전월 실적 100만 원 이상" }
+      ]
+    },
+    {
+      "card_id": "example-b",
+      "name": "예시 B",
+      "issuer": "예시카드",
+      "as_of": "2026-10-30",
+      "excluded_spend_note": "보험료, 무이자할부는 실적에서 제외됩니다.",
+      "tiers": [
+        { "spend_threshold": 300000, "discount_cap": 10000, "clause": "상품설명서 4쪽 · 전월 실적 30만 원 이상" },
+        { "spend_threshold": 600000, "discount_cap": 25000, "clause": "상품설명서 4쪽 · 전월 실적 60만 원 이상" }
+      ]
+    },
+    {
+      "card_id": "example-c",
+      "name": "예시 C",
+      "issuer": "예시카드",
+      "as_of": "2026-10-30",
+      "excluded_spend_note": "상품권, 선불카드 충전은 실적에서 제외됩니다.",
+      "tiers": [
+        { "spend_threshold": 200000, "discount_cap": 8000, "clause": "상품설명서 1쪽 · 전월 실적 20만 원 이상" },
+        { "spend_threshold": 400000, "discount_cap": 12000, "clause": "상품설명서 1쪽 · 전월 실적 40만 원 이상" },
+        { "spend_threshold": 800000, "discount_cap": 20000, "clause": "상품설명서 2쪽 · 전월 실적 80만 원 이상" }
+      ]
+    }
+  ]
+}
