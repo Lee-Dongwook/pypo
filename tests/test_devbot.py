@@ -277,3 +277,13 @@ def test_unmarked_block_creates_a_new_file(tmp_path: Path) -> None:
     edits = workspace.parse_edits("=== FILE: tests/test_x.py ===\nimport os\n\n\ndef test_x():\n    assert os\n=== END ===")
 
     assert workspace.apply_edits(tmp_path, edits) == {"tests/test_x.py": "import os\n\n\ndef test_x():\n    assert os\n"}
+
+
+def test_safe_lint_fixes_are_applied_before_verification(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    unused = FIXED.replace("    return a + b\n>>>>>>> REPLACE", "    return a + b\n>>>>>>> REPLACE\n<<<<<<< SEARCH\n=======\nimport os\n>>>>>>> REPLACE")
+
+    state = run(repo, [unused])
+
+    assert state["outcome"] == "passed"
+    assert "import os" not in state["diff"]

@@ -182,14 +182,18 @@ def reset(root: Path) -> None:
 
 
 def apply(root: Path, edits: dict[str, str]) -> None:
-    """원본으로 되돌린 뒤 이번 수정을 쓰고, import 순서·병합은 ruff에 맡긴다."""
+    """원본으로 되돌린 뒤 이번 수정을 쓰고, 기계적으로 고칠 수 있는 것은 ruff가 고친다.
+
+    import 정렬·병합, 쓰지 않는 import 같은 것은 모델에게 다시 시키면 시간만 들고 같은 답이 나온다.
+    ruff가 안전하다고 표시한 수정만 쓰고, 고친 파일에만 적용한다.
+    """
     reset(root)
     for path, content in edits.items():
         file = root / path
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(content, encoding="utf-8")
     if python := [path for path in edits if path.endswith(".py")]:
-        _run([sys.executable, "-m", "ruff", "check", "--fix", "--select", "I", "--quiet", *python], root)
+        _run([sys.executable, "-m", "ruff", "check", "--fix", "--quiet", *python], root)
 
 
 def diff_lines(root: Path) -> int:
