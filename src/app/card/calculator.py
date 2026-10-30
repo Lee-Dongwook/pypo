@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pydantic import BaseModel, Field
 from decimal import Decimal
+
+from pydantic import BaseModel, Field
 
 from .schemas import AllocationPlan, CalculationStatus, Card, CardAdvice, TierAnalysis
 
@@ -144,72 +145,12 @@ class PurchaseEvaluation(BaseModel):
     card_id: str
     name: str
     status: CalculationStatus
-    expected_discount: int = Field(ge=0, description="예상 할인액(원)")
+    expected_discount: int | None = Field(default=None, ge=0, description="예상 할인액(원). 계산 불가면 None")
     current_tier_threshold: int | None = None
     applied_discount_rate: Decimal | None = None
     remaining_cap: int | None = None
     clause: str
     reason: str
-
-def evaluate_single_purchase(
-    card: Card,
-    recognized_spend: int,
-    category: str,
-    amount: int,
-    remaining_cap: int | None = None,
-) -> PurchaseEvaluation:
-    if amount <= 0:
-        raise ValueError("결제 금액은 0보다 커야 합니다")
-    
-    # 1. 전월 실적 구간 확인
-    index = _current_tier_index(card, recognized_spend)
-    if index is None:
-        return PurchaseEvaluation(
-            card_id=card.card_id,
-            name=card.name,
-            status="ineligible",
-            expected_discount=0,
-            clause=card.tiers[0].clause if card.tiers else "",
-            reason="전월 실적 미달로 혜택 구간에 미치지 않습니다.",
-        )
-
-    tier = card.tiers[index]
-
-    # 2. 업종 적격성 확인 (지정된 업종이 있고 해당 업종에 포함되지 않으면 제외)
-    if tier.eligible_categories and category not in tier.eligible_categories:
-        return PurchaseEvaluation(
-            card_id=card.card_id,
-            name=card.name,
-            status="ineligible",
-            expected_discount=0,
-            current_tier_threshold=tier.spend_threshold,
-            clause=tier.clause,
-            reason=f"결제 업종({category})이 해당 카드의 혜택 적용 대상이 아닙니다.",
-        )
-    
-    # 3. 할인액 계산
-    if tier.discount_rate is None:
-        # 정액/고정 한도형인 경우 (단일 결제 할인 적용 방식에 따라 다름)
-        theoretical = tier.discount_cap or 0
-    else:
-        theoretical = int(Decimal(amount) * tier.discount_rate)
-    
-    # 4. 할인한도 제한 적용
-    cap_limit = remaining_cap if remaining_cap is not None else tier.discount_cap
-    expected_discount = theoretical if cap_limit is None else min(theoretical, cap_limit)
-
-    return PurchaseEvaluation(
-        card_id=card.card_id,
-        name=card.name,
-        status="eligible",
-        expected_discount=max(0, expected_discount),
-        current_tier_threshold=tier.spend_threshold,
-        applied_discount_rate=tier.discount_rate,
-        remaining_cap=cap_limit,
-        clause=tier.clause,
-        reason="조건을 충족하여 예상 할인이 적용됩니다.",
-    )
-
 
 def analyze_card_tier(
     card: Card,
@@ -283,7 +224,7 @@ def evaluate_single_purchase(
 ) -> PurchaseEvaluation:
     if amount <= 0:
         raise ValueError("결제 금액은 0보다 커야 합니다")
-    
+
     index = _current_tier_index(card, recognized_spend)
     if index is None:
         return PurchaseEvaluation(
@@ -291,45 +232,57 @@ def evaluate_single_purchase(
             name=card.name,
             status="ineligible",
             expected_discount=0,
-            clause=card.tiers[0].clause if card.tiers else "",
+            clause=card.tiers[0].clause,
             reason="전월 실적 미달로 혜택 구간에 미치지 않습니다.",
         )
 
     tier = card.tiers[index]
+    base = {
+        "card_id": card.card_id,
+        "name": card.name,
+        "current_tier_threshold": tier.spend_threshold,
+        "applied_discount_rate": tier.discount_rate,
+        "clause": tier.clause,
+    }
 
     if tier.eligible_categories and category not in tier.eligible_categories:
         return PurchaseEvaluation(
-            card_id=card.card_id,
-            name=card.name,
+            **base,
             status="ineligible",
             expected_discount=0,
-            current_tier_threshold=tier.spend_threshold,
-            clause=tier.clause,
             reason=f"결제 업종({category})이 해당 카드의 혜택 적용 대상이 아닙니다.",
         )
 
+    # 구간 고정 한도형은 결제 한 건에 얼마가 붙는지 약관만으로 알 수 없다.
     if tier.discount_rate is None:
-        theoretical_discount = tier.discount_cap or 0
-    else:
-        theoretical_discount = int(Decimal(amount) * tier.discount_rate)
+        return PurchaseEvaluation(
+            **base,
+            status="unsupported",
+            reason="할인율이 정의되지 않은 한도형 혜택이라 결제 건별 할인액을 계산할 수 없습니다.",
+        )
 
-    tier_cap = tier.discount_cap
-    effective_cap = remaining_cap if remaining_cap is not None else tier_cap
+    # PRD 8.4: 잔여 한도를 모르면 전체 한도를 잔여 한도로 간주하지 않는다.
+    if tier.discount_cap is not None and remaining_cap is None:
+        return PurchaseEvaluation(
+            **base,
+            status="insufficient_data",
+            reason="잔여 할인한도를 입력해야 예상 할인액을 계산할 수 있습니다.",
+        )
 
-    if effective_cap is not None:
-        expected_discount = min(theoretical_discount, effective_cap)
-    else:
-        expected_discount = theoretical_discount  # 무제한 한도
-
+    theoretical = int(Decimal(amount) * tier.discount_rate)
+    cap = None if tier.discount_cap is None else min(remaining_cap, tier.discount_cap)
     return PurchaseEvaluation(
-        card_id=card.card_id,
-        name=card.name,
+        **base,
         status="eligible",
-        expected_discount=max(0, expected_discount),
-        current_tier_threshold=tier.spend_threshold,
-        applied_discount_rate=tier.discount_rate,
-        remaining_cap=effective_cap,
-        clause=tier.clause,
+        expected_discount=theoretical if cap is None else min(theoretical, cap),
+        remaining_cap=cap,
         reason="전월 실적 및 업종 조건을 충족하며, 잔여 한도 내에서 할인이 적용됩니다.",
     )
 
+
+_STATUS_ORDER = {"eligible": 0, "ineligible": 1, "insufficient_data": 2, "unsupported": 3}
+
+
+def rank_purchase_evaluations(evaluations: Sequence[PurchaseEvaluation]) -> list[PurchaseEvaluation]:
+    """PRD 8.6: 계산 가능한 카드를 할인액순으로, 계산 불가 카드는 뒤에 따로 둔다. 동률은 입력 순서 유지."""
+    return sorted(evaluations, key=lambda e: (_STATUS_ORDER[e.status], -(e.expected_discount or 0)))

@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from src.app.card.calculator import evaluate_card, plan_allocation
+from src.app.card.calculator import (
+    evaluate_card,
+    evaluate_single_purchase,
+    plan_allocation,
+    rank_purchase_evaluations,
+)
 from src.app.card.schemas import Card, Tier
 
 
@@ -23,19 +28,19 @@ def make_card(
 def test_below_first_tier_targets_the_first_threshold() -> None:
     advice = evaluate_card(make_card(), 0)
 
-    assert advice.current_cap == 0
+    assert advice.current_benefit == 0
     assert advice.next_threshold == 300_000
     assert advice.gap == 300_000
-    assert advice.incremental_cap == 15_000
+    assert advice.incremental_gain == 15_000
     assert advice.action == "fill"
 
 
 def test_exactly_at_threshold_moves_to_the_next_gap() -> None:
     advice = evaluate_card(make_card(), 300_000)
 
-    assert advice.current_cap == 15_000
+    assert advice.current_benefit == 15_000
     assert advice.gap == 200_000
-    assert advice.incremental_cap == 5_000
+    assert advice.incremental_gain == 5_000
 
 
 def test_top_tier_needs_no_action() -> None:
@@ -44,7 +49,7 @@ def test_top_tier_needs_no_action() -> None:
     assert advice.action == "skip"
     assert advice.reason == "top_tier"
     assert advice.gap is None
-    assert advice.incremental_cap == 0
+    assert advice.incremental_gain == 0
 
 
 def test_flat_cap_between_tiers_is_not_worth_filling() -> None:
@@ -53,7 +58,7 @@ def test_flat_cap_between_tiers_is_not_worth_filling() -> None:
     advice = evaluate_card(card, 350_000)
 
     assert advice.gap == 250_000
-    assert advice.incremental_cap == 0
+    assert advice.incremental_gain == 0
     assert advice.reason == "no_gain"
 
 
@@ -146,3 +151,67 @@ def test_tier_without_clause_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Tier(spend_threshold=300_000, discount_cap=15_000, clause="")
 
+
+
+def make_rate_card(card_id: str = "r1", rate: str = "0.1", cap: int | None = 10_000) -> Card:
+    return Card(
+        card_id=card_id,
+        name="할인율 카드",
+        issuer="테스트",
+        tiers=[Tier(spend_threshold=300_000, discount_rate=rate, discount_cap=cap, clause="상품설명서 30만 원 구간")],
+        as_of="2026-10-30",
+    )
+
+
+def test_purchase_discount_is_capped_by_remaining_cap() -> None:
+    result = evaluate_single_purchase(make_rate_card(), 300_000, "cafe", 50_000, remaining_cap=3_000)
+
+    assert result.status == "eligible"
+    assert result.expected_discount == 3_000
+
+
+def test_remaining_cap_cannot_exceed_tier_cap() -> None:
+    result = evaluate_single_purchase(make_rate_card(), 300_000, "cafe", 500_000, remaining_cap=99_999)
+
+    assert result.expected_discount == 10_000
+
+
+def test_unknown_remaining_cap_is_insufficient_data() -> None:
+    result = evaluate_single_purchase(make_rate_card(), 300_000, "cafe", 50_000)
+
+    assert result.status == "insufficient_data"
+    assert result.expected_discount is None
+
+
+def test_unlimited_cap_needs_no_remaining_cap() -> None:
+    result = evaluate_single_purchase(make_rate_card(cap=None), 300_000, "cafe", 50_000)
+
+    assert result.status == "eligible"
+    assert result.expected_discount == 5_000
+
+
+def test_cap_only_tier_is_unsupported_for_single_purchase() -> None:
+    result = evaluate_single_purchase(make_card(), 300_000, "cafe", 1_000, remaining_cap=15_000)
+
+    assert result.status == "unsupported"
+    assert result.expected_discount is None
+
+
+def test_below_first_tier_is_ineligible() -> None:
+    result = evaluate_single_purchase(make_rate_card(), 299_999, "cafe", 50_000, remaining_cap=10_000)
+
+    assert result.status == "ineligible"
+    assert result.expected_discount == 0
+
+
+def test_ranking_puts_uncomputable_cards_last() -> None:
+    evaluations = [
+        evaluate_single_purchase(make_card("flat"), 300_000, "cafe", 50_000),
+        evaluate_single_purchase(make_rate_card("low", rate="0.01"), 300_000, "cafe", 50_000, remaining_cap=10_000),
+        evaluate_single_purchase(make_rate_card("none"), 0, "cafe", 50_000),
+        evaluate_single_purchase(make_rate_card("high"), 300_000, "cafe", 50_000, remaining_cap=10_000),
+    ]
+
+    ranked = [e.card_id for e in rank_purchase_evaluations(evaluations)]
+
+    assert ranked == ["high", "low", "none", "flat"]

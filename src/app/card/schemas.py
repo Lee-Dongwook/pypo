@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from calendar import c
 from datetime import date
 from decimal import Decimal
 from typing import Literal

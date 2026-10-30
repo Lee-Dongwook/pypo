@@ -556,14 +556,14 @@ MIN(
 
 - MVP에서는 금융 계정 및 카드사 계정 연동을 지원하지 않는다.
 - 카드번호, CVC, 비밀번호를 수집하지 않는다.
-- 개인별 실적 입력값은 서버에 전송하지 않는 구조를 우선한다.
+- 개인별 실적 입력값은 계산 요청에만 사용하고 서버에 저장하지 않는다 (API는 상태를 갖지 않는다).
 - 브라우저에 저장하는 정보와 삭제 방법을 명확하게 안내한다.
 
 ### 9.4 Performance
 
 - 카드별 계산은 사용자 입력 후 즉시 실행한다.
-- 초기 MVP는 별도 백엔드 없이 동작할 수 있어야 한다.
-- 카드 데이터는 정적 JSON으로 제공할 수 있어야 한다.
+- 계산 API는 데이터베이스 조회 없이 동작한다.
+- 카드 데이터는 큐레이션된 JSON 파일로 제공한다.
 
 ### 9.5 Accessibility and Usability
 
@@ -578,54 +578,50 @@ MIN(
 
 ### 10.1 Technology Stack
 
-| Layer            | Technology                    |
-| ---------------- | ----------------------------- |
-| Frontend         | React                         |
-| Language         | TypeScript                    |
-| Build Tool       | Vite                          |
-| Styling          | Tailwind CSS                  |
-| Validation       | Zod                           |
-| State Management | Zustand or React Context      |
-| Unit Testing     | Vitest                        |
-| E2E Testing      | Playwright                    |
-| Data Storage     | Static JSON + Browser Storage |
-| Deployment       | Vercel or Cloudflare Pages    |
+| Layer            | Technology                                      |
+| ---------------- | ----------------------------------------------- |
+| Frontend         | Next.js (App Router) + React                    |
+| Frontend Lang    | TypeScript                                      |
+| Styling          | Tailwind CSS                                    |
+| Server State     | TanStack Query                                  |
+| Client State     | Zustand                                         |
+| Backend          | FastAPI                                         |
+| Backend Lang     | Python                                          |
+| Validation       | Pydantic (도메인 경계)                          |
+| Unit Testing     | pytest                                          |
+| E2E Testing      | Playwright                                      |
+| Card Data        | 큐레이션 JSON (`samples/card_products.v0.json`) |
+| Monorepo         | pnpm workspace (web) + uv (Python)              |
+| Deployment       | 미정                                            |
 
 ### 10.2 Architecture Principles
 
-- UI와 계산 도메인을 분리한다.
+- UI와 계산 도메인을 분리한다. 계산은 백엔드에서만 수행한다.
 - 계산 엔진은 순수 함수 중심으로 설계한다.
-- 카드 상품 데이터는 정적 데이터로 관리한다.
-- 입력값 검증은 도메인 경계에서 수행한다.
+- 카드 상품 데이터는 버전이 붙은 JSON 파일로 관리한다 (`CARD_CATALOG_PATH`로 교체 가능).
+- 입력값 검증은 API 경계(Pydantic)에서 수행한다.
 - 계산 결과에는 근거와 상태를 포함한다.
-- 추후 백엔드 전환을 고려해 데이터 접근 계층을 분리한다.
+- 계산 API는 사용자 데이터를 저장하지 않는다.
+- 프론트엔드 타입은 `packages/api-client`에서 백엔드 스키마를 수동으로 따라간다.
 
 ### 10.3 Core Modules
 
 ```text
-src/
+src/app/card/           # 카드 도메인 (백엔드)
+├── schemas.py          # Card, Tier 등 도메인 모델
+├── catalog.py          # 카드 카탈로그 로딩
+├── calculator.py       # 계산 엔진 (순수 함수)
+└── api.py              # HTTP 엔드포인트
+
+apps/web/               # Next.js 프론트엔드
 ├── app/
-│   ├── routes/
-│   └── providers/
-│
-├── entities/
-│   ├── card/
-│   ├── benefit/
-│   └── spending/
-│
-├── features/
-│   ├── card-management/
-│   ├── spending-input/
-│   ├── benefit-analysis/
-│   └── card-optimization/
-│
-├── shared/
-│   ├── components/
-│   ├── utils/
-│   └── types/
-│
-└── data/
-    └── card-products.json
+├── components/
+└── store/
+
+packages/api-client/    # 프론트엔드용 API 타입 및 클라이언트
+
+samples/
+└── card_products.v0.json
 ```
 
 ---

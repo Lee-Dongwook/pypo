@@ -96,3 +96,19 @@ def test_missing_catalog_file_raises_a_clear_error(tmp_path, monkeypatch) -> Non
 
     monkeypatch.delenv("CARD_CATALOG_PATH")
     _load.cache_clear()
+
+
+@pytest.mark.parametrize("path", ["/card/optimize", "/card/tier-analysis"])
+def test_unknown_card_is_rejected_everywhere(path: str) -> None:
+    response = client.post(path, json={"spends": {"nope": 1}, "category": "cafe", "amount": 1_000})
+
+    assert response.status_code == 400
+
+
+def test_negative_remaining_cap_is_rejected() -> None:
+    response = client.post(
+        "/card/optimize",
+        json={"spends": {"example-a": 1}, "remaining_caps": {"example-a": -1}, "category": "cafe", "amount": 1_000},
+    )
+
+    assert response.status_code == 422
