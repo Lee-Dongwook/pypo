@@ -86,14 +86,23 @@ def build_graph(
         root = Path(state["worktree"])
         text = _ask(model, _prompt(repo, "implement", plan=state["plan"], feedback=state["feedback"],
                                    **state["context"]))
-        edits = workspace.parse_file_blocks(text)
-        problems = path_violations(edits, state["task"].files, root) if edits else ["출력 형식에 맞는 파일 블록이 없음"]
-        for path, content in edits.items() if not problems else ():
+        edits = workspace.parse_edits(text)
+        problems = path_violations({e.path for e in edits}, state["task"].files, root) if edits else [
+            "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음"
+        ]
+        contents: dict[str, str] = {}
+        if not problems:
+            workspace.reset(root)
+            try:
+                contents = workspace.apply_edits(root, edits)
+            except workspace.EditError as error:
+                problems.append(str(error))
+        for path, content in contents.items():
             if (root / path).exists() and (gone := removed_tests((root / path).read_text(encoding="utf-8"), content)):
-                problems.append(f"{path}: 기존 테스트를 지움 ({', '.join(gone)}). 파일 전체를 빠짐없이 다시 쓸 것")
+                problems.append(f"{path}: 기존 테스트를 지움 ({', '.join(gone)}). 바꿀 부분만 SEARCH/REPLACE로 쓸 것")
         if problems:
             return _retry(state, "출력이 규칙을 어겼습니다:\n- " + "\n- ".join(problems))
-        workspace.apply(root, edits)
+        workspace.apply(root, contents)
         return {"feedback": ""}
 
     def verify(state: DevbotState) -> DevbotState:

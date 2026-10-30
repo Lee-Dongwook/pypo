@@ -9,8 +9,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-_FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)\n?^=== END ===", re.S | re.M)
-_FENCE = re.compile(r"\A```[\w-]*\n(.*?)\n?```\s*\Z", re.S)
+_FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
+_EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
 
 
@@ -60,20 +60,69 @@ def references(root: Path, targets: tuple[str, ...]) -> list[str]:
     return sorted(found - set(targets))
 
 
-def parse_file_blocks(text: str) -> dict[str, str]:
-    """모델 출력에서 `=== FILE: path === ... === END ===` 블록을 꺼낸다."""
-    edits: dict[str, str] = {}
-    for path, body in _FILE_BLOCK.findall(text):
-        fenced = _FENCE.match(body.strip())
-        content = fenced.group(1) if fenced else body
-        edits[path] = content.rstrip("\n") + "\n"
-    return edits
+@dataclass(frozen=True)
+class Edit:
+    """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다)."""
+
+    path: str
+    search: str
+    replace: str
+
+
+class EditError(ValueError):
+    pass
+
+
+def parse_edits(text: str) -> list[Edit]:
+    """모델 출력에서 `=== FILE ===` 안의 SEARCH/REPLACE 블록을 꺼낸다. 블록 밖 글은 무시한다."""
+    return [
+        Edit(path, search, replace)
+        for path, body in _FILE_BLOCK.findall(text)
+        for search, replace in _EDIT_BLOCK.findall(body)
+    ]
+
+
+def _replace_once(text: str, edit: Edit) -> str:
+    if not edit.search.strip():
+        return text + ("\n" if text and not text.endswith("\n") else "") + edit.replace
+    if (count := text.count(edit.search)) == 1:
+        return text.replace(edit.search, edit.replace, 1)
+    if count > 1:
+        raise EditError(f"{edit.path}: SEARCH가 {count}곳과 일치함. 앞뒤 줄을 더 넣어 한 곳만 가리키게 할 것")
+
+    # 작은 모델은 줄 끝 공백을 자주 틀린다. 줄 끝 공백만 무시하고 한 번 더 찾는다.
+    lines = text.splitlines(keepends=True)
+    wanted = [line.rstrip() for line in edit.search.splitlines()]
+    stripped = [line.rstrip() for line in lines]
+    hits = [i for i in range(len(lines) - len(wanted) + 1) if stripped[i : i + len(wanted)] == wanted]
+    if len(hits) != 1:
+        first = wanted[0] if wanted else ""
+        raise EditError(
+            f"{edit.path}: SEARCH가 현재 파일과 일치하지 않음 (첫 줄: {first!r}). 현재 내용을 그대로 복사할 것"
+        )
+    i = hits[0]
+    return "".join(lines[:i]) + edit.replace + "".join(lines[i + len(wanted) :])
+
+
+def apply_edits(root: Path, edits: list[Edit]) -> dict[str, str]:
+    """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`."""
+    contents: dict[str, str] = {}
+    for edit in edits:
+        if edit.path not in contents:
+            file = root / edit.path
+            contents[edit.path] = file.read_text(encoding="utf-8") if file.exists() else ""
+        contents[edit.path] = _replace_once(contents[edit.path], edit)
+    return contents
+
+
+def reset(root: Path) -> None:
+    """이전 시도의 수정을 모두 지운다. 모델은 항상 원본을 보고 SEARCH를 쓰기 때문이다."""
+    _git(root, "reset", "--quiet", "--hard")
+    _git(root, "clean", "-fdq")
 
 
 def apply(root: Path, edits: dict[str, str]) -> None:
-    """이전 시도를 지우고 이번 수정만 적용한다."""
-    _git(root, "reset", "--quiet", "--hard")
-    _git(root, "clean", "-fdq")
+    reset(root)
     for path, content in edits.items():
         file = root / path
         file.parent.mkdir(parents=True, exist_ok=True)

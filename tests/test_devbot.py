@@ -2,6 +2,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from src.app.agents.devbot import workspace
@@ -32,7 +33,13 @@ _No response_
 테스트는 고치지 않는다
 """
 
-FIXED = "=== FILE: calc.py ===\n```python\ndef add(a, b):\n    return a + b\n```\n=== END ==="
+FIXED = """=== FILE: calc.py ===
+<<<<<<< SEARCH
+    return a - b
+=======
+    return a + b
+>>>>>>> REPLACE
+=== END ==="""
 
 
 def test_issue_form_body_becomes_a_task() -> None:
@@ -74,10 +81,41 @@ def test_forbidden_paths_win_even_when_the_issue_lists_them(tmp_path: Path) -> N
     ]
 
 
-def test_file_blocks_are_parsed_with_or_without_fences() -> None:
-    text = f"설명\n{FIXED}\n=== FILE: b.py ===\nx = 1\n=== END ===\n"
+def test_search_replace_blocks_are_parsed_and_text_outside_is_ignored() -> None:
+    text = f"설명\n```\n{FIXED}\n```\n=== FILE: b.py ===\n<<<<<<< SEARCH\n=======\nx = 1\n>>>>>>> REPLACE\n=== END ===\n"
 
-    assert workspace.parse_file_blocks(text) == {"calc.py": "def add(a, b):\n    return a + b\n", "b.py": "x = 1\n"}
+    assert workspace.parse_edits(text) == [
+        workspace.Edit("calc.py", "    return a - b\n", "    return a + b\n"),
+        workspace.Edit("b.py", "", "x = 1\n"),
+    ]
+
+
+def test_edits_replace_once_append_and_create(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\ny = 2\n")
+    edits = [
+        workspace.Edit("a.py", "y = 2\n", "y = 3\n"),
+        workspace.Edit("a.py", "", "z = 4\n"),
+        workspace.Edit("new.py", "", "n = 0\n"),
+    ]
+
+    assert workspace.apply_edits(tmp_path, edits) == {"a.py": "x = 1\ny = 3\nz = 4\n", "new.py": "n = 0\n"}
+
+
+def test_trailing_spaces_in_search_are_tolerated(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\ny = 2\n")
+
+    assert workspace.apply_edits(tmp_path, [workspace.Edit("a.py", "x = 1  \n", "x = 9\n")]) == {"a.py": "x = 9\ny = 2\n"}
+
+
+@pytest.mark.parametrize(
+    ("content", "search", "message"),
+    [("x = 1\n", "y = 2\n", "일치하지 않음"), ("x = 1\nx = 1\n", "x = 1\n", "2곳과 일치")],
+)
+def test_search_must_match_exactly_one_place(tmp_path: Path, content: str, search: str, message: str) -> None:
+    (tmp_path / "a.py").write_text(content)
+
+    with pytest.raises(workspace.EditError, match=message):
+        workspace.apply_edits(tmp_path, [workspace.Edit("a.py", search, "z\n")])
 
 
 def make_repo(path: Path) -> Path:
@@ -124,10 +162,18 @@ def test_ambiguous_issue_ends_with_a_question(tmp_path: Path) -> None:
 
 def test_deleting_existing_tests_is_rejected_even_if_pytest_passes(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "repo")
-    wipe = "=== FILE: tests/test_calc.py ===\ndef test_new():\n    assert True\n=== END ==="
+    wipe = """=== FILE: tests/test_calc.py ===
+<<<<<<< SEARCH
+def test_add():
+    assert add(1, 2) == 3
+=======
+def test_new():
+    assert True
+>>>>>>> REPLACE
+=== END ==="""
     body = BODY.replace("calc.py\n\n### 완료", "calc.py\ntests/test_calc.py\n\n### 완료")
     graph = build_graph(
-        FakeListChatModel(responses=["- 테스트를 바꾼다", wipe, f"{FIXED}\n{wipe}".replace("def test_new", "def test_add")]),
+        FakeListChatModel(responses=["- 테스트를 바꾼다", wipe, FIXED]),
         repo,
         base="HEAD",
         issues=lambda number: [{"number": 1, "title": "t", "body": body}],
@@ -149,7 +195,7 @@ def test_removed_tests_lists_only_deleted_test_functions() -> None:
 
 
 def test_touching_forbidden_paths_fails_after_max_attempts(tmp_path: Path) -> None:
-    bad = "=== FILE: .github/ci.yml ===\nx\n=== END ==="
+    bad = "=== FILE: .github/ci.yml ===\n<<<<<<< SEARCH\n=======\nx\n>>>>>>> REPLACE\n=== END ==="
 
     state = run(make_repo(tmp_path / "repo"), ["- 고친다", *[bad] * MAX_ATTEMPTS])
 
