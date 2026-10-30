@@ -25,15 +25,14 @@ def _model_reference(config: RunnableConfig) -> str:
     return str(configurable.get("search_model") or settings.search_model)
 
 
-def get_search_model(config: RunnableConfig) -> BaseChatModel:
-    """Build the chat model configured for the search subgraph.
+def resolve_chat_model(reference: str, **kwargs: object) -> BaseChatModel:
+    """Build a chat model from ``"provider:model"``.
 
-    Resolution order is ``config["configurable"]["search_model"]`` and then
-    ``settings.search_model``. Both accept ``"provider:model"``; a bare provider
-    name uses that provider's default model. The provider integration package
-    (for example ``langchain-openai``) must be installed.
+    A bare provider name uses that provider's default model. The provider
+    integration package (for example ``langchain-openai``) must be installed.
+    Extra keyword arguments go to the provider's chat model class.
     """
-    reference = _model_reference(config).strip()
+    reference = reference.strip()
     provider, separator, model = reference.partition(":")
     provider = _PROVIDER_ALIASES.get(provider.strip(), provider.strip())
 
@@ -42,11 +41,19 @@ def get_search_model(config: RunnableConfig) -> BaseChatModel:
 
     if not provider or not model:
         raise ValueError(
-            f"cannot resolve search model {reference!r}; use 'provider:model' "
-            "or one of the supported providers"
+            f"cannot resolve chat model {reference!r}; use 'provider:model' or one of the supported providers"
         )
 
-    return init_chat_model(model, model_provider=provider, temperature=0)
+    return init_chat_model(model, model_provider=provider, temperature=0, **kwargs)
 
 
-__all__ = ["get_search_model"]
+def get_search_model(config: RunnableConfig) -> BaseChatModel:
+    """Build the chat model configured for the search subgraph.
+
+    Resolution order is ``config["configurable"]["search_model"]`` and then
+    ``settings.search_model``.
+    """
+    return resolve_chat_model(_model_reference(config))
+
+
+__all__ = ["get_search_model", "resolve_chat_model"]
