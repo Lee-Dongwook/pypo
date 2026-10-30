@@ -274,4 +274,62 @@ def analyze_card_tier(
         clause=clause,
     )
 
+def evaluate_single_purchase(
+    card: Card,
+    recognized_spend: int,
+    category: str,
+    amount: int,
+    remaining_cap: int | None = None,
+) -> PurchaseEvaluation:
+    if amount <= 0:
+        raise ValueError("결제 금액은 0보다 커야 합니다")
+    
+    index = _current_tier_index(card, recognized_spend)
+    if index is None:
+        return PurchaseEvaluation(
+            card_id=card.card_id,
+            name=card.name,
+            status="ineligible",
+            expected_discount=0,
+            clause=card.tiers[0].clause if card.tiers else "",
+            reason="전월 실적 미달로 혜택 구간에 미치지 않습니다.",
+        )
+
+    tier = card.tiers[index]
+
+    if tier.eligible_categories and category not in tier.eligible_categories:
+        return PurchaseEvaluation(
+            card_id=card.card_id,
+            name=card.name,
+            status="ineligible",
+            expected_discount=0,
+            current_tier_threshold=tier.spend_threshold,
+            clause=tier.clause,
+            reason=f"결제 업종({category})이 해당 카드의 혜택 적용 대상이 아닙니다.",
+        )
+
+    if tier.discount_rate is None:
+        theoretical_discount = tier.discount_cap or 0
+    else:
+        theoretical_discount = int(Decimal(amount) * tier.discount_rate)
+
+    tier_cap = tier.discount_cap
+    effective_cap = remaining_cap if remaining_cap is not None else tier_cap
+
+    if effective_cap is not None:
+        expected_discount = min(theoretical_discount, effective_cap)
+    else:
+        expected_discount = theoretical_discount  # 무제한 한도
+
+    return PurchaseEvaluation(
+        card_id=card.card_id,
+        name=card.name,
+        status="eligible",
+        expected_discount=max(0, expected_discount),
+        current_tier_threshold=tier.spend_threshold,
+        applied_discount_rate=tier.discount_rate,
+        remaining_cap=effective_cap,
+        clause=tier.clause,
+        reason="전월 실적 및 업종 조건을 충족하며, 잔여 한도 내에서 할인이 적용됩니다.",
+    )
 
