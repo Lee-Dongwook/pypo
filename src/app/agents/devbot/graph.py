@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import logging
 import operator
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from string import Template
@@ -19,6 +21,8 @@ from langgraph.graph.state import CompiledStateGraph
 from . import github, workspace
 from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations, removed_tests
 from .issue import Task, parse_task
+
+logger = logging.getLogger(__name__)
 
 _FENCE = re.compile(r"^```[\w-]*\n|\n?```\s*$", re.M)
 
@@ -41,11 +45,28 @@ class DevbotState(TypedDict, total=False):
 
 
 def _prompt(repo: Path, name: str, **values: str) -> str:
-    return Template((repo / "agent" / "prompts" / f"{name}.md").read_text(encoding="utf-8")).substitute(values)
+    """공통 문맥(context.md) 뒤에 단계별 지시를 붙인다.
+
+    모든 호출의 앞부분이 글자 하나 다르지 않아야 Ollama가 이미 읽은 부분을 캐시로 재사용한다.
+    """
+    prompts = repo / "agent" / "prompts"
+    parts = [(prompts / "context.md").read_text(encoding="utf-8"), (prompts / f"{name}.md").read_text(encoding="utf-8")]
+    return "\n".join(Template(part).substitute(values) for part in parts)
 
 
-def _ask(model: BaseChatModel, prompt: str) -> str:
-    return str(model.invoke(prompt).content)
+def _ask(model: BaseChatModel, prompt: str, step: str) -> str:
+    started = time.monotonic()
+    reply = model.invoke(prompt)
+    meta = reply.response_metadata or {}
+    logger.info(
+        "llm %s: 입력 %s토큰(읽는 데 %.0fs) 출력 %s토큰, 총 %.0fs",
+        step,
+        meta.get("prompt_eval_count", "?"),
+        meta.get("prompt_eval_duration", 0) / 1e9,
+        meta.get("eval_count", "?"),
+        time.monotonic() - started,
+    )
+    return str(reply.content)
 
 
 def build_graph(
@@ -83,15 +104,15 @@ def build_graph(
 
     def plan(state: DevbotState) -> DevbotState:
         # 작은 모델은 답을 코드 블록으로 감싸곤 한다. 감싼 표시를 벗겨야 QUESTION을 알아본다.
-        text = _FENCE.sub("", _ask(model, _prompt(repo, "plan", **state["context"]))).strip()
+        text = _FENCE.sub("", _ask(model, _prompt(repo, "plan", **state["context"]), "plan")).strip()
         if text.startswith("QUESTION:"):
             return {"outcome": "question", "message": text.removeprefix("QUESTION:").strip()}
         return {"plan": text}
 
     def implement(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
-        text = _ask(model, _prompt(repo, "implement", plan=state["plan"], feedback=state["feedback"],
-                                   **state["context"]))
+        prompt = _prompt(repo, "implement", plan=state["plan"], feedback=state["feedback"], **state["context"])
+        text = _ask(model, prompt, f"implement#{state['attempts'] + 1}")
         edits = workspace.parse_edits(text)
         problems = path_violations({e.path for e in edits}, state["task"].files, root) if edits else [
             "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음"

@@ -8,6 +8,7 @@ M1은 미리 보기만 한다. GitHub에는 아무것도 쓰지 않고, 결과�
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from src.app.engine.models import resolve_chat_model
@@ -34,6 +35,8 @@ def main() -> None:
     parser.add_argument("--model", default=settings.devbot_model)
     parser.add_argument("--keep", action="store_true", help="작업 공간(worktree)을 지우지 않고 남김")
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="[pypo] %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     print(f"[pypo] model={args.model} base={args.base}")
     graph = build_graph(_model(args.model), REPO, base=args.base)
