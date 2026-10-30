@@ -98,7 +98,7 @@ def test_edits_replace_once_append_and_create(tmp_path: Path) -> None:
         workspace.Edit("new.py", "", "n = 0\n"),
     ]
 
-    assert workspace.apply_edits(tmp_path, edits) == {"a.py": "x = 1\ny = 3\nz = 4\n", "new.py": "n = 0\n"}
+    assert workspace.apply_edits(tmp_path, edits) == {"a.py": "x = 1\ny = 3\n\n\nz = 4\n", "new.py": "n = 0\n"}
 
 
 def test_trailing_spaces_in_search_are_tolerated(tmp_path: Path) -> None:
@@ -260,3 +260,20 @@ def test_long_question_with_a_plan_is_a_format_error_not_a_question(tmp_path: Pa
 
     assert state["outcome"] == "passed"
     assert state["attempts"] == 1
+
+
+def test_unmarked_block_is_appended_and_its_imports_are_hoisted(tmp_path: Path) -> None:
+    (tmp_path / "t.py").write_text("import os\n\n\ndef test_a():\n    pass\n")
+    reply = "=== FILE: t.py ===\n```python\nimport sys\n\n\ndef test_b():\n    assert sys\n```\n=== END ==="
+
+    edits = workspace.parse_edits(reply)
+
+    assert workspace.apply_edits(tmp_path, edits) == {
+        "t.py": "import os\nimport sys\n\n\ndef test_a():\n    pass\n\n\ndef test_b():\n    assert sys\n"
+    }
+
+
+def test_unmarked_block_creates_a_new_file(tmp_path: Path) -> None:
+    edits = workspace.parse_edits("=== FILE: tests/test_x.py ===\nimport os\n\n\ndef test_x():\n    assert os\n=== END ===")
+
+    assert workspace.apply_edits(tmp_path, edits) == {"tests/test_x.py": "import os\n\n\ndef test_x():\n    assert os\n"}

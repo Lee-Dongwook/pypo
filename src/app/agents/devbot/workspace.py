@@ -101,17 +101,50 @@ class EditError(ValueError):
 
 
 def parse_edits(text: str) -> list[Edit]:
-    """모델 출력에서 `=== FILE ===` 안의 SEARCH/REPLACE 블록을 꺼낸다. 블록 밖 글은 무시한다."""
-    return [
-        Edit(path, search, replace)
-        for path, body in _FILE_BLOCK.findall(text)
-        for search, replace in _EDIT_BLOCK.findall(body)
-    ]
+    """모델 출력에서 `=== FILE ===` 블록을 꺼낸다. 블록 밖 글은 무시한다.
+
+    SEARCH/REPLACE 표시가 있으면 찾아 바꾸기, 없으면 블록 안 코드 전체를 덧붙이기(새 파일이면 만들기)로 본다.
+    7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다.
+    """
+    edits: list[Edit] = []
+    for path, body in _FILE_BLOCK.findall(text):
+        if blocks := _EDIT_BLOCK.findall(body):
+            edits += [Edit(path, search, replace) for search, replace in blocks]
+        elif code := _unfence(body).strip("\n"):
+            edits.append(Edit(path, "", code + "\n"))
+    return edits
+
+
+def _unfence(body: str) -> str:
+    return "\n".join(line for line in body.splitlines() if not re.fullmatch(r"\s*```[\w-]*\s*", line))
+
+
+def _append(text: str, addition: str) -> str:
+    """파일 끝에 덧붙인다. 덧붙일 코드 맨 위의 import 줄은 파일의 import 영역 바로 뒤로 옮긴다."""
+    lines = addition.splitlines(keepends=True)
+    imports: list[str] = []
+    while lines and (lines[0].startswith(("import ", "from ")) or not lines[0].strip()):
+        line = lines.pop(0)
+        if line.strip():
+            imports.append(line)
+    body = "".join(lines).lstrip("\n")
+    if not text.strip():
+        return "".join(imports) + ("\n\n" if imports and body else "") + body
+
+    if imports:
+        try:
+            tops = [node for node in ast.parse(text).body if isinstance(node, ast.Import | ast.ImportFrom)]
+        except SyntaxError:
+            tops = []
+        head = text.splitlines(keepends=True)
+        at = tops[-1].end_lineno if tops else 0
+        text = "".join(head[:at]) + "".join(imports) + "".join(head[at:])
+    return text.rstrip("\n") + ("\n\n\n" + body if body.strip() else "\n")
 
 
 def _replace_once(text: str, edit: Edit) -> str:
     if not edit.search.strip():
-        return text + ("\n" if text and not text.endswith("\n") else "") + edit.replace
+        return _append(text, edit.replace)
     if (count := text.count(edit.search)) == 1:
         return text.replace(edit.search, edit.replace, 1)
     if count > 1:
@@ -149,11 +182,14 @@ def reset(root: Path) -> None:
 
 
 def apply(root: Path, edits: dict[str, str]) -> None:
+    """원본으로 되돌린 뒤 이번 수정을 쓰고, import 순서·병합은 ruff에 맡긴다."""
     reset(root)
     for path, content in edits.items():
         file = root / path
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(content, encoding="utf-8")
+    if python := [path for path in edits if path.endswith(".py")]:
+        _run([sys.executable, "-m", "ruff", "check", "--fix", "--select", "I", "--quiet", *python], root)
 
 
 def diff_lines(root: Path) -> int:
