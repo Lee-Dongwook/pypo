@@ -251,3 +251,12 @@ def test_reference_snippets_keep_only_what_the_issue_needs(tmp_path: Path) -> No
 
     assert "def wanted" in text and "class Result" in text
     assert "unrelated" not in text
+
+
+def test_long_question_with_a_plan_is_a_format_error_not_a_question(tmp_path: Path) -> None:
+    rambling = "QUESTION: 이슈를 이해했습니다.\n" + "\n".join(f"{i}. 테스트를 추가합니다" for i in range(6))
+
+    state = run(make_repo(tmp_path / "repo"), [rambling, FIXED])
+
+    assert state["outcome"] == "passed"
+    assert state["attempts"] == 1

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import operator
 import re
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -54,17 +55,25 @@ def _prompt(repo: Path, name: str, **values: str) -> str:
     return "\n".join(Template(part).substitute(values) for part in parts)
 
 
+LOG_DIR = Path(tempfile.gettempdir()) / "pypo-logs"
+
+
 def _ask(model: BaseChatModel, prompt: str, step: str) -> str:
+    """모델 호출. 디버깅을 위해 프롬프트와 응답 원문을 LOG_DIR에 남긴다."""
     started = time.monotonic()
     reply = model.invoke(prompt)
+    LOG_DIR.mkdir(exist_ok=True)
+    (LOG_DIR / f"{step}.prompt.md").write_text(prompt, encoding="utf-8")
+    (LOG_DIR / f"{step}.reply.md").write_text(str(reply.content), encoding="utf-8")
     meta = reply.response_metadata or {}
     logger.info(
-        "llm %s: 입력 %s토큰(읽는 데 %.0fs) 출력 %s토큰, 총 %.0fs",
+        "llm %s: 입력 %s토큰(읽는 데 %.0fs) 출력 %s토큰, 총 %.0fs → %s",
         step,
         meta.get("prompt_eval_count", "?"),
         meta.get("prompt_eval_duration", 0) / 1e9,
         meta.get("eval_count", "?"),
         time.monotonic() - started,
+        LOG_DIR / f"{step}.reply.md",
     )
     return str(reply.content)
 
@@ -104,13 +113,14 @@ def build_graph(
     def implement(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
         prompt = _prompt(repo, "implement", feedback=state["feedback"], **state["context"])
-        text = _ask(model, prompt, f"implement#{state['attempts'] + 1}")
+        text = _ask(model, prompt, f"issue{state['task'].number}-try{state['attempts'] + 1}")
         edits = workspace.parse_edits(text)
-        # 블록이 하나라도 있으면 일한 것으로 본다. 작은 모델은 계획 앞에도 QUESTION을 붙이곤 한다.
-        if not edits and (question := _FENCE.sub("", text).strip()).startswith("QUESTION:"):
+        # 짧은 질문만 질문으로 받는다. 작은 모델은 계획이나 코드 앞에도 QUESTION을 붙이곤 하는데, 그건 형식 오류다.
+        question = _FENCE.sub("", text).strip()
+        if not edits and question.startswith("QUESTION:") and len(question.splitlines()) <= 4 and len(question) <= 400:
             return {"outcome": "question", "message": question.removeprefix("QUESTION:").strip()}
         problems = path_violations({e.path for e in edits}, state["task"].files, root) if edits else [
-            "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음"
+            "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음. 설명 없이 첫 줄부터 `=== FILE: <경로> ===`로 시작할 것"
         ]
         contents: dict[str, str] = {}
         if not problems:
