@@ -1,23 +1,65 @@
 # pypo
 
-**Ontology-driven Agent Platform**
+**이 저장소에서 일하는 AI 동료.**
 
-도메인 지식을 온톨로지로 모델링하고, 그 지식 위에서 에이전트가 검색·추론·실행하도록 만드는 플랫폼입니다.
+사람이 GitHub Issue로 계획을 쓰면, pypo는 매일 작은 작업을 골라 구현하고 PR을 올립니다. 리뷰를 받으면 고치고, 배운 것을 기억해 다음 작업에 씁니다. 처음에는 실력이 부족해도 됩니다. 대신 일할수록 나아지고, AI API 비용은 0원으로 시작합니다.
 
-> **Status**: 초기 스캐폴딩 단계입니다. 아래 아키텍처는 목표 구조이고, 현재 저장소에는 User/Agent 모델과 LangGraph·MCP·검색 노드의 뼈대가 들어 있습니다.
+pypo는 같은 이름의 플랫폼, 즉 **온톨로지 기반 에이전트 엔진** 위에서 돌아갑니다. pypo 자신이 그 엔진의 첫 번째 사용자입니다.
 
-## 왜 온톨로지 + 에이전트인가
+> **Status**: 설계와 준비 단계입니다. M0(규칙, 페르소나, 이슈 양식, 라벨)를 마쳤고 M1(로컬 미리 보기)을 진행 중입니다. 상세 설계는 [docs/DEVBOT.md](docs/DEVBOT.md)에 있습니다.
 
-LLM 단독으로는 "우리 도메인에서 A와 B가 어떤 관계인가"에 안정적으로 답하기 어렵습니다. pypo는 이 간극을 온톨로지로 메웁니다.
+## pypo에게 일 맡기기
 
-- **관계 추론**: 명시된 사실뿐 아니라 규칙으로 유도되는 사실까지 답에 사용합니다.
-- **근거 있는 답변**: 모든 답변에 엔티티 IRI, 그래프 경로, 출처를 함께 반환합니다.
-- **지식 자산화**: 대화 로그가 아니라 버전 관리되는 온톨로지로 지식이 축적됩니다.
-- **에이전트 재사용**: 같은 지식 계층을 여러 에이전트와 외부 MCP 클라이언트가 공유합니다.
+1. GitHub에서 **New issue → "pypo 작업"** 양식을 고릅니다.
+2. 목표, 수정할 파일(1~3개), 완료 기준, 하지 않을 것을 채웁니다. 완료 기준은 테스트로 확인할 수 있게 씁니다.
+3. 양식으로 만든 이슈에는 `bot-ready` 라벨이 붙습니다. 아직 준비가 안 됐으면 라벨을 떼 둡니다.
+4. pypo가 이슈를 가져가 `pypo/<이슈번호>-<slug>` 브랜치에 PR을 올립니다. 리뷰와 머지는 사람이 합니다.
 
-핵심 설계는 **온톨로지를 에이전트 내부에 숨기지 않고 MCP 서버로 노출**하는 것입니다. 에이전트는 SPARQL을 직접 작성하지 않고, 스키마 조회·엔티티 검색·그래프 탐색·추론 도구를 통해 지식에 접근합니다.
+| 라벨           | 의미                                                    |
+| -------------- | ------------------------------------------------------- |
+| `bot-ready`    | pypo가 가져가도 되는 작업                               |
+| `bot-question` | pypo가 질문을 남김. 답한 뒤 라벨을 지우면 다시 후보가 됨 |
+| `bot-failed`   | 3회 시도 후 실패. 이슈를 쪼개거나 직접 처리             |
+| `pypo`         | pypo가 만든 PR                                          |
 
-## 아키텍처
+pypo는 이슈에 적힌 내용과 파일만 보고 일합니다. 이슈가 정확할수록 결과가 좋습니다.
+
+## pypo가 일하는 방식
+
+```text
+작업 고르기 → 계획 → 구현 → 검증 → PR 생성 → 회고
+   코드       LLM    LLM    코드     코드      LLM
+```
+
+- **LLM은 필요한 곳에만 씁니다.** 고르기, 검증, PR 생성은 일반 코드가 결정적으로 처리합니다.
+- **테스트가 판정합니다.** ruff, pytest, typecheck를 통과하지 못하면 에러를 보고 최대 3번 다시 시도하고, 그래도 안 되면 PR 대신 이슈에 실패 기록을 남깁니다.
+- **안전장치는 코드로 강제합니다.** 수정 금지 경로, 허용된 명령만 실행, main 직접 푸시 금지, 변경 400줄 상한, 리뷰 대기 PR 3개 상한.
+- **기억하고 진화합니다.** 회고를 `agent/memory/`에, 반복되는 절차를 `agent/skills/`에 쌓습니다. 자기 작업 이력을 시험 문제로 삼아, 평가 점수가 오를 때만 자기 개선을 제안합니다. 안전장치와 평가 코드는 pypo가 고칠 수 없습니다.
+- **모델은 설정으로 바꿉니다.** `DEVBOT_MODEL="provider:model"`. 기본은 로컬 Ollama(0원)입니다.
+
+| 파일                                                                     | 내용                                         |
+| ------------------------------------------------------------------------ | -------------------------------------------- |
+| [`AGENTS.md`](AGENTS.md)                                                 | 이 저장소에서 일하는 모든 에이전트의 규칙    |
+| [`agent/persona.md`](agent/persona.md)                                   | pypo의 정체성, 원칙, 말투 (사람만 수정)       |
+| [`.github/ISSUE_TEMPLATE/bot-task.yml`](.github/ISSUE_TEMPLATE/bot-task.yml) | 작업 이슈 양식                               |
+| `src/app/agents/devbot/`                                                 | pypo 구현 (예정)                             |
+
+## 지금 상태
+
+| 단계 | 내용                                        | 상태    |
+| ---- | ------------------------------------------- | ------- |
+| M0   | `AGENTS.md`, 페르소나, 이슈 양식, 라벨, 첫 이슈 3개 | 완료    |
+| M1   | 로컬 미리 보기 (작업 흐름 + 코드 작성, Ollama) | 진행 중 |
+| M2   | 실제 PR 생성 + 일일 요약                    |         |
+| M3   | 리뷰 코멘트와 CI 실패 반영                  |         |
+| M4   | 기억: 회고 작성과 다음 계획에 반영          |         |
+| M5   | GitHub Actions 무인 운영                    |         |
+| M6   | 재실행 평가 + 스킬 문서                     |         |
+| M7   | 자기 개선 제안                              |         |
+
+## pypo가 돌아가는 엔진
+
+도메인 지식을 온톨로지로 모델링하고, 그 위에서 에이전트가 검색·추론·실행하는 플랫폼입니다. LLM 단독으로는 "우리 도메인에서 A와 B가 어떤 관계인가"에 안정적으로 답하기 어렵습니다. 이 간극을 온톨로지로 메우고, 모든 답에 그래프 경로와 출처를 붙입니다. 지식은 대화 로그가 아니라 버전 관리되는 온톨로지로 쌓입니다. pypo의 기억도 나중에 여기로 옮깁니다.
 
 ```text
 Client / External MCP Client
@@ -51,155 +93,11 @@ Client / External MCP Client
 └─────────────────┘
 ```
 
-**GraphDB가 온톨로지의 원장**이고, **Neo4j는 탐색·분석·시각화를 위한 읽기 투영**입니다. 쓰기는 GraphDB로만 들어가고, 변경 이벤트가 Neo4j로 비동기 반영됩니다.
+GraphDB가 온톨로지의 원장이고, Neo4j는 탐색·분석·시각화를 위한 읽기 투영입니다. 계층별 상세, MCP 도구 계약, 하이브리드 검색, 데이터 모델은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)에 있습니다.
 
-## 네 개의 계층
+현재 엔진은 초기 스캐폴딩 단계입니다. User/Agent 모델, LangGraph·MCP·검색 노드의 뼈대, Neo4j 투영, 카드 계산기 API가 있고, 온톨로지 MCP 서버와 Supervisor 루프는 아직 구현 전입니다.
 
-### Ontology layer
-
-- OWL/RDF 스키마와 인스턴스 데이터를 **버전이 있는 named graph**로 관리합니다.
-- SHACL로 데이터 품질을 검증하고, OWL 2 RL 규칙으로 유도 사실을 물질화합니다.
-- SPARQL 1.1 엔드포인트를 제공하되, 외부에는 **제한된 MCP 도구**로만 노출합니다.
-- 온톨로지 버전을 에이전트에 고정할 수 있어, 지식이 바뀌어도 답변 재현성이 유지됩니다.
-
-### Graph projection layer
-
-- GraphDB의 RDF를 Neo4j property graph로 투영합니다.
-- Cypher 기반 다중 hop 탐색, GDS 중심성·커뮤니티·유사도, Bloom 시각화를 담당합니다.
-- 추론된 트리플도 `inferred` 표시와 함께 투영합니다.
-- 원장이 아니므로 언제든 재생성할 수 있어야 합니다.
-
-### Agent layer
-
-- **Agent**는 workflow, 지식 범위(ontology version), 도구 목록을 묶은 실행 단위입니다.
-- **Supervisor**가 요청을 분해하고 하위 에이전트나 MCP 도구로 위임합니다.
-- 도구 탐색은 BM25로, 지식 검색은 pgvector 후보 생성 + 그래프 확장으로 처리합니다.
-- 의미론 질의는 GraphDB(SPARQL), 탐색·분석은 Neo4j(Cypher)로 라우팅합니다.
-- 모든 실행은 trace로 남기고, 답변에는 그래프 경로와 출처를 붙입니다.
-
-### Identity layer
-
-- 자체 세션과 OIDC를 **하나의 `Principal`로 수렴**시킵니다.
-- 웹은 HttpOnly 세션 쿠키, API/MCP는 Bearer 토큰을 사용합니다.
-- OIDC는 authorization code + PKCE, tenant별 IdP, JIT 프로비저닝, 그룹→역할 매핑을 지원합니다.
-- 계정 연결은 검증된 이메일을 기준으로 하며, `user_identity`에 provider/subject를 분리 저장합니다.
-
-## MCP 도구 표면 (계획)
-
-| 도구                   | 역할                                                | 노출  |
-| ---------------------- | --------------------------------------------------- | ----- |
-| `ontology.list`        | 접근 가능한 온톨로지와 버전 목록                    | read  |
-| `ontology.schema`      | 클래스·프로퍼티·라벨 요약 (토큰 예산 적용)          | read  |
-| `ontology.search`      | 라벨/별칭/임베딩 기반 엔티티 검색                   | read  |
-| `ontology.entity`      | IRI 기준 엔티티와 주변 그래프 조회                  | read  |
-| `ontology.query`       | 읽기 전용 SPARQL SELECT/ASK, tenant graph 자동 주입 | read  |
-| `ontology.validate`    | SHACL 검증 리포트                                   | admin |
-| `ontology.ingest`      | Turtle/JSON-LD 적재, 비동기 job                     | admin |
-| `ontology.materialize` | 추론 규칙 실행 및 유도 그래프 생성                  | admin |
-| `knowledge.search`     | 문서 청크 벡터 검색                                 | read  |
-| `graph.neighbors`      | Cypher 기반 다중 hop 이웃 탐색                      | read  |
-| `graph.path`           | 두 엔티티 사이 경로 탐색                            | read  |
-| `graph.analytics`      | GDS 중심성·커뮤니티·유사도 (사전 정의된 알고리즘)  | read  |
-
-## 하이브리드 검색 (계획)
-
-```text
-질문
-  → 1. 질의 이해 (엔티티/관계 후보 추출)
-  → 2. 후보 생성 (pgvector + BM25)
-  → 3. 그래프 확장 (GraphDB SPARQL + Neo4j Cypher)
-  → 4. 추론 (OWL 2 RL / 도메인 규칙)
-  → 5. 재정렬 (유사도 + 그래프 중심성 + 출처 신뢰도)
-  → 6. 컨텍스트 패킹 (서브그래프 + citation)
-  → LLM 답변
-```
-
-벡터 검색만으로는 "관계"를 놓치고, 그래프 탐색만으로는 표현이 다른 질문을 놓칩니다. 두 신호를 합치는 것이 pypo의 핵심 차별점입니다.
-
-## 기술 스택
-
-| 영역          | 현재                                      | 도입 예정                                                       |
-| ------------- | ----------------------------------------- | --------------------------------------------------------------- |
-| API           | FastAPI, Pydantic v2                      | OpenAPI 기반 SDK                                                |
-| Orchestration | LangGraph, LangChain                      | workflow DSL, 실행 trace                                        |
-| Tool protocol | MCP, FastMCP                              | 온톨로지 MCP 서버                                               |
-| Ontology      | —                                         | GraphDB (원장), Oxigraph (dev/CI), `rdflib`, `pyshacl`          |
-| Graph         | —                                         | Neo4j (읽기 투영), GDS, Bloom                                   |
-| 인증          | —                                         | 자체 세션 + OIDC, RBAC, tenant membership                       |
-| 저장소        | PostgreSQL, pgvector, SQLAlchemy, Alembic | S3/MinIO, named graph 규약, outbox                              |
-| 비동기        | Redis, Celery                             | 적재·임베딩·추론·Neo4j 투영 job                                 |
-| 모델          | PyTorch                                   | 임베딩/리랭커 교체 가능한 어댑터                                |
-| 관측          | —                                         | OpenTelemetry, run trace, audit log                             |
-
-트리플 스토어는 교체 가능하게 설계합니다. 개발/CI는 Oxigraph, 운영 원장은 GraphDB를 사용합니다. Neo4j는 원장이 아니라 투영이므로 언제든 GraphDB에서 재생성합니다. 관계형 데이터 가상화가 필요해지면 Stardog을 별도로 검토합니다.
-
-## 저장소 구조
-
-```text
-src/app/
-├── agents/            # Agent 모델, GraphBuilder, Supervisor, MCP 연동
-│   ├── graph/         # workflow → LangGraph 컴파일
-│   ├── mcp/           # MCP 서버 스펙과 클라이언트
-│   └── supervisor/    # 상위 오케스트레이션, 도구 탐색
-├── engine/
-│   └── search/        # 지식 검색 노드 (pgvector + graph)
-├── security/
-│   └── gatekeeper/    # 실행 격리, syscall 관찰
-├── shared/            # DB, registry, 공통 타입
-└── user/              # 사용자와 소유권
-```
-
-## 현재 실행
-
-```bash
-uv sync
-cp .env.example .env
-docker compose -f docker-compose.dev.yml up -d
-uv run alembic upgrade head
-uv run python main.py
-```
-
-- OpenAPI UI: <http://localhost:8000/docs>
-- OpenAPI YAML: <http://localhost:8000/openapi.yaml>
-
-검사와 테스트:
-
-```bash
-uv run pytest
-uv run ruff check .
-```
-
-- 마이그레이션은 `migrations/`에 있고, 모델을 바꾼 뒤 `uv run alembic revision --autogenerate -m "..."`로 추가합니다.
-- CI는 lint → pytest → `alembic upgrade head` → `alembic check` 순서로 돌아 모델과 스키마의 드리프트를 잡습니다.
-- 온톨로지 MCP 서버, Supervisor 루프, 벡터 스토어 백엔드는 아직 구현 전입니다.
-
-
-## 제품 전략: 하나의 엔진, 두 채널
-
-pypo는 B2B 플랫폼과 B2C 앱을 함께 가져갑니다. B2C 앱은 엔진을 한 층씩 증명하는 시연장이고, B2B는 같은 엔진을 조직에 파는 채널입니다.
-
-| 단계 | 제품 | 증명하는 엔진 층 |
-| ---- | ---- | ---------------- |
-| 1 (진행 중) | 카드 실적 배분 계산기 | 규칙 엔진, 조항·기준일 근거 |
-| 2 | 카드 + 지원금 충돌 지도 | 온톨로지, SHACL, 그래프 경로 설명 |
-| 3 | 근거 있는 혜택 질의 | 에이전트, MCP 도구 |
-| 4 | B2B 파일럿 | 멀티테넌시, 온톨로지 템플릿 |
-
-엔진 작업은 다음 단계가 필요로 할 때만 당겨옵니다. 단계별 Go/No-Go 기준은 [docs/STRATEGY.md](docs/STRATEGY.md)에 있습니다.
-
-## 로드맵
-
-| 단계                      | 목표                                                   | 완료 기준                                            |
-| ------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| **0. Foundation**         | 로컬 인프라, 설정, CI, 테스트 하네스, store 포트       | `docker compose up`으로 Postgres/Redis/Oxigraph/Neo4j 기동 |
-| **1. Ontology core**      | 온톨로지 적재·검증·버전 관리, schema/search/query 도구, 세션·OIDC 인증 | 외부 MCP 클라이언트에서 샘플 온톨로지 질의, 세션/OIDC 로그인 성공 |
-| **2. Agent loop**         | Agent CRUD, workflow DSL, GraphBuilder, Supervisor     | 질문 → 근거 있는 답변 E2E 1개                        |
-| **3. Hybrid retrieval**   | pgvector 임베딩, 그래프 확장, 재정렬, OWL 2 RL, Neo4j 투영 | 골든셋에서 recall/groundedness 목표 달성             |
-| **4. Ingestion at scale** | 관계형 매핑, 문서 파이프라인, 증분 적재                | 100만 트리플 / 1만 문서 처리                         |
-| **5. Platform**           | 멀티테넌시, 쿼터, 감사, 관측, RBAC 고도화              | 테넌트 2개 이상 완전 격리                            |
-| **6. Ecosystem**          | 온톨로지 템플릿, 마켓플레이스, SDK                     | 외부 에이전트가 MCP로 지식 계층 사용                 |
-
-## 설계 원칙
+### 설계 원칙
 
 1. **지식과 실행을 분리한다.** 온톨로지는 MCP 서버, 에이전트는 그 소비자입니다.
 2. **원장과 투영을 분리한다.** GraphDB가 유일한 원장이고 Neo4j는 재생성 가능한 읽기 모델입니다.
@@ -210,7 +108,65 @@ pypo는 B2B 플랫폼과 B2C 앱을 함께 가져갑니다. B2C 앱은 엔진을
 7. **평가를 먼저 만든다.** 골든 질문셋과 지표 없이 검색·프롬프트를 바꾸지 않습니다.
 8. **처음부터 멀티테넌트를 전제한다.** tenant는 데이터 모델과 named graph 규약에 처음부터 들어갑니다.
 
+### 기술 스택
+
+| 영역          | 현재                                      | 도입 예정                                              |
+| ------------- | ----------------------------------------- | ------------------------------------------------------ |
+| API           | FastAPI, Pydantic v2                      | OpenAPI 기반 SDK                                       |
+| Orchestration | LangGraph, LangChain                      | workflow DSL, 실행 trace                               |
+| Tool protocol | MCP, FastMCP                              | 온톨로지 MCP 서버                                      |
+| Ontology      | —                                         | GraphDB (원장), Oxigraph (dev/CI), `rdflib`, `pyshacl` |
+| Graph         | Neo4j (읽기 투영)                         | GDS, Bloom                                             |
+| 인증          | —                                         | 자체 세션 + OIDC, RBAC, tenant membership              |
+| 저장소        | PostgreSQL, pgvector, SQLAlchemy, Alembic | S3/MinIO, named graph 규약, outbox                     |
+| 비동기        | Redis, Celery                             | 적재·임베딩·추론·Neo4j 투영 job                        |
+| 모델          | PyTorch                                   | 로컬 Ollama(pypo), 임베딩/리랭커 교체 가능한 어댑터    |
+| 웹            | Next.js, TanStack Query, Zustand          |                                                        |
+| 관측          | —                                         | OpenTelemetry, run trace, audit log                    |
+
+### 엔진 로드맵
+
+| 단계                      | 목표                                                                     | 완료 기준                                                         |
+| ------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| **0. Foundation**         | 로컬 인프라, 설정, CI, 테스트 하네스, store 포트                         | `docker compose up`으로 Postgres/Redis/Oxigraph/Neo4j 기동        |
+| **1. Ontology core**      | 온톨로지 적재·검증·버전 관리, schema/search/query 도구, 세션·OIDC 인증   | 외부 MCP 클라이언트에서 샘플 온톨로지 질의, 세션/OIDC 로그인 성공 |
+| **2. Agent loop**         | Agent CRUD, workflow DSL, GraphBuilder, Supervisor                       | 질문 → 근거 있는 답변 E2E 1개                                     |
+| **3. Hybrid retrieval**   | pgvector 임베딩, 그래프 확장, 재정렬, OWL 2 RL, Neo4j 투영               | 골든셋에서 recall/groundedness 목표 달성                          |
+| **4. Ingestion at scale** | 관계형 매핑, 문서 파이프라인, 증분 적재                                  | 100만 트리플 / 1만 문서 처리                                      |
+| **5. Platform**           | 멀티테넌시, 쿼터, 감사, 관측, RBAC 고도화                                | 테넌트 2개 이상 완전 격리                                         |
+| **6. Ecosystem**          | 온톨로지 템플릿, 마켓플레이스, SDK                                       | 외부 에이전트가 MCP로 지식 계층 사용                              |
+
+엔진 작업은 제품(B2C 앱, pypo)이 필요로 할 때만 당겨옵니다.
+
+## 제품 전략
+
+같은 엔진을 B2B와 B2C 두 채널로 가져갑니다. B2C 앱은 엔진을 한 층씩 증명하는 시연장이고, B2B는 같은 엔진을 조직에 파는 채널입니다. 첫 B2C인 카드 실적 배분 계산기(`src/app/card/`, `apps/web/`)는 지금 일시 중단 상태입니다. 단계별 계획과 Go/No-Go 기준은 [docs/STRATEGY.md](docs/STRATEGY.md)에 있습니다.
+
+## 개발 환경
+
+```bash
+uv sync
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up -d
+uv run alembic upgrade head
+uv run python main.py          # API: http://localhost:8000/docs
+pnpm install && pnpm dev       # 웹: http://localhost:3000
+```
+
+검사:
+
+```bash
+uv run ruff check .
+uv run pytest                  # DB가 필요한 통합 테스트는 환경 변수가 없으면 자동 skip
+pnpm typecheck
+```
+
+- 마이그레이션은 `migrations/`에 있고, 모델을 바꾼 뒤 `uv run alembic revision --autogenerate -m "..."`로 추가합니다.
+- CI는 lint → pytest → `alembic upgrade head` → `alembic check` 순서로 돌아 모델과 스키마의 드리프트를 잡습니다.
+
 ## 문서
 
+- [DEVBOT](docs/DEVBOT.md): pypo(AI 동료) 설계, 단계, 안전장치, 기억과 진화
 - [Strategy](docs/STRATEGY.md): B2B·B2C 관계, 단계별 Go/No-Go
-- [Architecture](docs/ARCHITECTURE.md): 계층, 데이터 모델, MCP 계약, 검색·추론, 보안, 로드맵 상세
+- [Architecture](docs/ARCHITECTURE.md): 엔진 계층, 데이터 모델, MCP 계약, 검색·추론, 보안
+- [PRD](docs/PRD.md): 카드 실적 배분 계산기 (일시 중단)
