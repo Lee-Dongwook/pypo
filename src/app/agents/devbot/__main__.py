@@ -21,8 +21,8 @@ REPO = Path(__file__).resolve().parents[4]
 
 
 def _model(reference: str):
-    # Ollama는 기본 문맥이 짧아 파일 몇 개만 넣어도 잘린다.
-    extra = {"num_ctx": 16384} if reference.startswith("ollama") else {}
+    # Ollama 기본 문맥(4k)은 짧고, 16k는 16GB Mac에서 스왑을 일으킨다. 참고 파일을 발췌해 12k 안에 맞춘다. 넘치면 Ollama가 앞부분을 조용히 잘라 버린다.
+    extra = {"num_ctx": 12288} if reference.startswith("ollama") else {}
     return resolve_chat_model(reference, **extra)
 
 
@@ -45,8 +45,6 @@ def main() -> None:
     task = state.get("task")
     print(f"[pypo] 이슈: {f'#{task.number} {task.title}' if task else '-'}")
     print(f"[pypo] 결과: {state['outcome']} ({state.get('message', '')[:500]})")
-    if state.get("plan"):
-        print(f"[pypo] 계획:\n{state['plan']}")
     for line in state.get("history", []):
         print(f"[pypo] {line[:800]}")
     for check in state.get("checks", []):

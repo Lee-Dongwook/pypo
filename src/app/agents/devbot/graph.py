@@ -1,6 +1,7 @@
 """pypo의 작업 흐름 (docs/DEVBOT.md 4절, 2~5단계).
 
-작업 고르기 → 계획 → 구현 → 검증. LLM은 계획과 구현에만 쓰고, 나머지는 코드가 판정한다.
+작업 고르기 → 구현 → 검증. LLM은 구현에만 쓰고, 나머지는 코드가 판정한다.
+계획 단계는 7B 모델에서 판단이 틀리고 느려서 뺐다 (구현 단계가 QUESTION도 맡는다).
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ class DevbotState(TypedDict, total=False):
     task: Task
     worktree: str
     context: dict[str, str]
-    plan: str
     attempts: int
     feedback: str
     checks: list[workspace.Check]
@@ -89,31 +89,26 @@ def build_graph(
                 workspace.remove(repo, root)
                 skipped.append(f"#{task.number}({'; '.join(problems)})")
                 continue
-            refs = workspace.references(root, task.files)
             context = {
                 "agents": (repo / "AGENTS.md").read_text(encoding="utf-8"),
                 "number": str(task.number),
                 "title": task.title,
                 "body": task.body,
-                "references": "\n\n".join(f"--- {p} ---\n{workspace.read(root, p)}" for p in refs) or "(없음)",
+                "references": workspace.reference_snippets(root, task.files, task.body) or "(없음)",
                 "files": "\n\n".join(f"--- {p} ---\n{workspace.read(root, p)}" for p in task.files),
             }
             return {"task": task, "worktree": str(root), "context": context, "attempts": 0, "feedback": ""}
         reason = f" 건너뜀: {', '.join(skipped)}" if skipped else ""
         return {"outcome": "no_task", "message": f"가져갈 수 있는 이슈가 없습니다.{reason}"}
 
-    def plan(state: DevbotState) -> DevbotState:
-        # 작은 모델은 답을 코드 블록으로 감싸곤 한다. 감싼 표시를 벗겨야 QUESTION을 알아본다.
-        text = _FENCE.sub("", _ask(model, _prompt(repo, "plan", **state["context"]), "plan")).strip()
-        if text.startswith("QUESTION:"):
-            return {"outcome": "question", "message": text.removeprefix("QUESTION:").strip()}
-        return {"plan": text}
-
     def implement(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
-        prompt = _prompt(repo, "implement", plan=state["plan"], feedback=state["feedback"], **state["context"])
+        prompt = _prompt(repo, "implement", feedback=state["feedback"], **state["context"])
         text = _ask(model, prompt, f"implement#{state['attempts'] + 1}")
         edits = workspace.parse_edits(text)
+        # 블록이 하나라도 있으면 일한 것으로 본다. 작은 모델은 계획 앞에도 QUESTION을 붙이곤 한다.
+        if not edits and (question := _FENCE.sub("", text).strip()).startswith("QUESTION:"):
+            return {"outcome": "question", "message": question.removeprefix("QUESTION:").strip()}
         problems = path_violations({e.path for e in edits}, state["task"].files, root) if edits else [
             "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음"
         ]
@@ -168,12 +163,10 @@ def build_graph(
 
     graph = StateGraph(DevbotState)
     graph.add_node("pick", pick)
-    graph.add_node("plan", plan)
     graph.add_node("implement", implement)
     graph.add_node("verify", verify)
     graph.add_edge(START, "pick")
-    graph.add_conditional_edges("pick", lambda s: END if s.get("outcome") else "plan")
-    graph.add_conditional_edges("plan", lambda s: END if s.get("outcome") else "implement")
+    graph.add_conditional_edges("pick", lambda s: END if s.get("outcome") else "implement")
     graph.add_conditional_edges("implement", after_implement)
     graph.add_conditional_edges("verify", after_verify)
     return graph.compile()

@@ -146,7 +146,7 @@ def run(repo: Path, responses: list[str]) -> dict:
 
 
 def test_bad_output_is_retried_and_tests_decide(tmp_path: Path) -> None:
-    state = run(make_repo(tmp_path / "repo"), ["- add를 덧셈으로 고친다", "형식 없는 답", FIXED])
+    state = run(make_repo(tmp_path / "repo"), ["형식 없는 답", FIXED])
 
     assert state["outcome"] == "passed"
     assert state["attempts"] == 1
@@ -173,7 +173,7 @@ def test_new():
 === END ==="""
     body = BODY.replace("calc.py\n\n### 완료", "calc.py\ntests/test_calc.py\n\n### 완료")
     graph = build_graph(
-        FakeListChatModel(responses=["- 테스트를 바꾼다", wipe, FIXED]),
+        FakeListChatModel(responses=[wipe, FIXED]),
         repo,
         base="HEAD",
         issues=lambda number: [{"number": 1, "title": "t", "body": body}],
@@ -197,7 +197,7 @@ def test_removed_tests_lists_only_deleted_test_functions() -> None:
 def test_touching_forbidden_paths_fails_after_max_attempts(tmp_path: Path) -> None:
     bad = "=== FILE: .github/ci.yml ===\n<<<<<<< SEARCH\n=======\nx\n>>>>>>> REPLACE\n=== END ==="
 
-    state = run(make_repo(tmp_path / "repo"), ["- 고친다", *[bad] * MAX_ATTEMPTS])
+    state = run(make_repo(tmp_path / "repo"), [bad] * MAX_ATTEMPTS)
 
     assert state["outcome"] == "failed"
     assert state["attempts"] == MAX_ATTEMPTS
@@ -219,7 +219,7 @@ def test_tests_named_in_the_issue_must_exist(tmp_path: Path) -> None:
         "    assert add(0, 0) == 0\n>>>>>>> REPLACE\n=== END ===",
     )
     graph = build_graph(
-        FakeListChatModel(responses=["- 고친다", FIXED, added]),
+        FakeListChatModel(responses=[FIXED, added]),
         repo,
         base="HEAD",
         issues=lambda number: [{"number": 1, "title": "t", "body": body}],
@@ -231,3 +231,23 @@ def test_tests_named_in_the_issue_must_exist(tmp_path: Path) -> None:
     assert state["outcome"] == "passed"
     assert state["attempts"] == 1
     assert "test_add_zero" in state["history"][0]
+
+
+def test_question_is_ignored_when_edits_are_present(tmp_path: Path) -> None:
+    state = run(make_repo(tmp_path / "repo"), [f"QUESTION: 이렇게 하면 되나요?\n{FIXED}"])
+
+    assert state["outcome"] == "passed"
+
+
+def test_reference_snippets_keep_only_what_the_issue_needs(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text(
+        "class Result:\n    x: int\n\n\ndef wanted():\n    return Result()\n\n\ndef unrelated():\n    return 1\n"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_m.py").write_text("from src.m import wanted, unrelated\n")
+
+    text = workspace.reference_snippets(tmp_path, ("tests/test_m.py",), "`wanted` 테스트 추가")
+
+    assert "def wanted" in text and "class Result" in text
+    assert "unrelated" not in text

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -58,6 +59,32 @@ def references(root: Path, targets: tuple[str, ...]) -> list[str]:
             if (root / candidate).exists():
                 found.add(candidate)
     return sorted(found - set(targets))
+
+
+def reference_snippets(root: Path, targets: tuple[str, ...], hint: str) -> str:
+    """참고 모듈에서 필요한 정의만 발췌한다.
+
+    이슈(`hint`)에 이름이 나온 최상위 함수·클래스와, 그 정의가 직접 쓰는 다른 정의까지 넣는다.
+    모듈을 통째로 넣으면 입력이 길어져 작은 모델이 느려지고 흐려진다.
+    """
+    defs: dict[str, tuple[str, str]] = {}
+    for path in references(root, targets):
+        source = (root / path).read_text(encoding="utf-8")
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                defs[node.name] = (path, ast.get_source_segment(source, node) or "")
+
+    words = set(re.findall(r"\w+", hint))
+    chosen = {name for name in defs if name in words}
+    for name in list(chosen):
+        chosen |= {other for other in defs if other != name and re.search(rf"\b{other}\b", defs[name][1])}
+
+    by_path: dict[str, list[str]] = {}
+    for name in defs:
+        if name in chosen:
+            path, code = defs[name]
+            by_path.setdefault(path, []).append(code)
+    return "\n\n".join(f"--- {path} (발췌) ---\n" + "\n\n\n".join(codes) for path, codes in by_path.items())
 
 
 @dataclass(frozen=True)
