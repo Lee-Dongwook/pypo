@@ -287,3 +287,11 @@ def test_safe_lint_fixes_are_applied_before_verification(tmp_path: Path) -> None
 
     assert state["outcome"] == "passed"
     assert "import os" not in state["diff"]
+
+
+def test_trailing_whitespace_written_by_the_model_is_removed() -> None:
+    reply = "=== FILE: a.py ===\ndef f():\n    x = 1\n    \n    return x  \n=== END ===\n"
+
+    [edit] = workspace.parse_edits(reply)
+
+    assert edit.replace == "def f():\n    x = 1\n\n    return x\n"

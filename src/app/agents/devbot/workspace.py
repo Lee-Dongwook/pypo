@@ -104,15 +104,19 @@ def parse_edits(text: str) -> list[Edit]:
     """모델 출력에서 `=== FILE ===` 블록을 꺼낸다. 블록 밖 글은 무시한다.
 
     SEARCH/REPLACE 표시가 있으면 찾아 바꾸기, 없으면 블록 안 코드 전체를 덧붙이기(새 파일이면 만들기)로 본다.
-    7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다.
+    7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다. 모델이 쓴 줄 끝 공백은 지운다.
     """
     edits: list[Edit] = []
     for path, body in _FILE_BLOCK.findall(text):
         if blocks := _EDIT_BLOCK.findall(body):
-            edits += [Edit(path, search, replace) for search, replace in blocks]
+            edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):
-            edits.append(Edit(path, "", code + "\n"))
+            edits.append(Edit(path, "", _strip_trailing(code) + "\n"))
     return edits
+
+
+def _strip_trailing(code: str) -> str:
+    return re.sub(r"[ \t]+$", "", code, flags=re.M)
 
 
 def _unfence(body: str) -> str:
