@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import c
 from datetime import date
 from decimal import Decimal
 from typing import Literal
@@ -58,6 +59,31 @@ class Tier(BaseModel):
         """Benefit at the tier's own threshold, used to order tiers."""
         return self.benefit(self.spend_threshold)
 
+class TierAnalysis(BaseModel):
+    card_id: str
+    name: str
+    recognized_spend: int = Field(ge=0, description="현재 전월 인정 실적(원)")
+    
+    # 현재 구간 정보
+    current_tier_index: int | None = Field(default=None, description="현재 실적 구간 인덱스 (실적 미달 시 None)")
+    current_threshold: int = Field(default=0, description="현재 구간 기준 금액(원)")
+    current_discount_cap: int | None = Field(default=None, description="현재 구간의 월 할인한도(원)")
+    
+    # 다음 구간 정보 및 필요 금액
+    next_tier_index: int | None = Field(default=None, description="다음 실적 구간 인덱스")
+    next_threshold: int | None = Field(default=None, description="다음 구간 기준 금액(원)")
+    remaining_spend_to_next_tier: int = Field(default=0, ge=0, description="다음 구간 도달까지 필요한 추가 실적(원)")
+    
+    # 한도 및 혜택 증가량
+    next_discount_cap: int | None = Field(default=None, description="다음 구간의 월 할인한도(원)")
+    incremental_cap_increase: int | None = Field(default=None, description="다음 구간 도달 시 늘어나는 할인한도 증가량(원)")
+    
+    is_top_tier: bool = Field(default=False, description="최상위 실적 구간 도달 여부")
+    clause: str = Field(default="", description="현재 구간 적용 약관 근거")
+    policy_note: str = Field(
+        default="다음 구간 도달을 위한 추가 지출은 필수 권장 사항이 아닙니다.",
+        description="PRD 6.7 안내 문구",
+    )
 
 class Card(BaseModel):
     model_config = ConfigDict(frozen=True)

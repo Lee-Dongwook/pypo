@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from pydantic import BaseModel, Field
 from decimal import Decimal
 
-from .schemas import AllocationPlan, CalculationStatus, Card, CardAdvice
+from .schemas import AllocationPlan, CalculationStatus, Card, CardAdvice, TierAnalysis
 
 MAX_CANDIDATE_CARDS = 20
 
@@ -209,5 +209,69 @@ def evaluate_single_purchase(
         clause=tier.clause,
         reason="조건을 충족하여 예상 할인이 적용됩니다.",
     )
+
+
+def analyze_card_tier(
+    card: Card,
+    recognized_spend: int,
+    used_discount: int = 0,
+) -> TierAnalysis:
+    if recognized_spend < 0:
+        raise ValueError("실적 금액은 0 이상이어야 합니다")
+
+    index = _current_tier_index(card, recognized_spend)
     
+    # 1. 현재 구간 세팅
+    current_tier = card.tiers[index] if index is not None else None
+    current_threshold = current_tier.spend_threshold if current_tier else 0
+    current_cap = current_tier.discount_cap if current_tier else 0
+    clause = current_tier.clause if current_tier else (card.tiers[0].clause if card.tiers else "")
+
+    # 2. 다음 구간 세팅
+    next_index = 0 if index is None else index + 1
+    is_top_tier = next_index >= len(card.tiers)
+
+    if is_top_tier:
+        return TierAnalysis(
+            card_id=card.card_id,
+            name=card.name,
+            recognized_spend=recognized_spend,
+            current_tier_index=index,
+            current_threshold=current_threshold,
+            current_discount_cap=current_cap,
+            next_tier_index=None,
+            next_threshold=None,
+            remaining_spend_to_next_tier=0,
+            next_discount_cap=None,
+            incremental_cap_increase=0,
+            is_top_tier=True,
+            clause=clause,
+        )
+
+    next_tier = card.tiers[next_index]
+    remaining_spend = next_tier.spend_threshold - recognized_spend
+    
+    # 3. 한도 증가량 계산 (한도가 무제한이거나 None인 경우 분기 처리)
+    next_cap = next_tier.discount_cap
+    if current_cap is not None and next_cap is not None:
+        cap_increase = next_cap - current_cap
+    else:
+        cap_increase = None  # 무제한 한도이거나 산출 불가의 경우
+
+    return TierAnalysis(
+        card_id=card.card_id,
+        name=card.name,
+        recognized_spend=recognized_spend,
+        current_tier_index=index,
+        current_threshold=current_threshold,
+        current_discount_cap=current_cap,
+        next_tier_index=next_index,
+        next_threshold=next_tier.spend_threshold,
+        remaining_spend_to_next_tier=max(0, remaining_spend),
+        next_discount_cap=next_cap,
+        incremental_cap_increase=cap_increase,
+        is_top_tier=False,
+        clause=clause,
+    )
+
 

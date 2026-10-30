@@ -10,9 +10,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from .calculator import PurchaseEvaluation, evaluate_single_purchase, plan_allocation
+from .calculator import PurchaseEvaluation, analyze_card_tier, evaluate_single_purchase, plan_allocation
 from .catalog import Catalog, load_catalog
-from .schemas import AllocationPlan
+from .schemas import AllocationPlan, TierAnalysis
 
 router = APIRouter()
 
@@ -91,3 +91,24 @@ def optimize_purchase(request: OptimizePurchaseRequest) -> OptimizePurchaseRespo
         recommendations=sorted_recommendations,
     )
 
+class TierAnalysisRequest(BaseModel):
+    spends: dict[str, int] = Field(default_factory=dict, description="카드 ID별 전월 인정 실적")
+
+
+class TierAnalysisResponse(BaseModel):
+    analyses: list[TierAnalysis]
+
+@router.post("/tier-analysis", response_model=TierAnalysisResponse)
+def analyze_tiers(request: TierAnalysisRequest) -> TierAnalysisResponse:
+    catalog = load_catalog()
+    card_map = {card.card_id: card for card in catalog.cards}
+
+    results: list[TierAnalysis] = []
+    for card_id, recognized_spend in request.spends.items():
+        card = card_map.get(card_id)
+        if not card:
+            continue
+        analysis = analyze_card_tier(card, recognized_spend)
+        results.append(analysis)
+
+    return TierAnalysisResponse(analyses=results)
