@@ -116,10 +116,9 @@ def test_cheaper_combination_wins_a_tie() -> None:
     assert plan.leftover == 10_000
 
 
-def test_missing_spend_defaults_to_zero() -> None:
-    plan = plan_allocation([make_card("a")], {}, planned_spend=300_000)
-
-    assert plan.advice[0].recognized_spend == 0
+def test_missing_spend_is_rejected_not_treated_as_zero() -> None:
+    with pytest.raises(ValueError, match="실적이 입력되지 않은"):
+        plan_allocation([make_card("a")], {}, planned_spend=300_000)
 
 
 def test_zero_budget_fills_nothing() -> None:

@@ -8,10 +8,12 @@ export function CardRow({
   card,
   value,
   onChange,
+  onRemove,
 }: {
   card: Card;
-  value: number;
-  onChange: (value: number) => void;
+  value: number | null;
+  onChange: (value: number | null) => void;
+  onRemove: () => void;
 }) {
   const ladder = card.tiers.map((tier) => `${Math.round(tier.spend_threshold / 10_000)}만`).join(" · ");
 
@@ -29,9 +31,17 @@ export function CardRow({
           label={`${card.name} 이번 달 실적`}
           value={value}
           onChange={onChange}
-          placeholder="0"
+          placeholder="모름"
         />
       </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`${card.name} 삭제`}
+        className="h-11 w-8 shrink-0 rounded-lg text-lg text-zinc-300 transition hover:bg-zinc-50 hover:text-zinc-600"
+      >
+        ×
+      </button>
     </div>
   );
 }

@@ -55,9 +55,12 @@ def create_plan(request: PlanRequest) -> AllocationPlan:
     catalog = load_catalog()
 
     _require_known(catalog, set(request.spends))
+    if not request.spends:
+        raise HTTPException(status_code=400, detail="실적을 입력한 카드가 하나 이상 필요합니다")
 
     try:
-        return plan_allocation(catalog.cards, request.spends, request.planned_spend)
+        cards = [card for card in catalog.cards if card.card_id in request.spends]
+        return plan_allocation(cards, request.spends, request.planned_spend)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

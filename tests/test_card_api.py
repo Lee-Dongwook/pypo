@@ -34,6 +34,19 @@ def test_plan_picks_the_card_with_the_larger_incremental_cap() -> None:
     assert [item["card_id"] for item in body["advice"] if item["action"] == "fill"] == ["example-b"]
 
 
+def test_plan_covers_only_cards_with_entered_spend() -> None:
+    response = client.post("/card/plan", json={"spends": {"example-b": 0}, "planned_spend": 100_000})
+
+    assert response.status_code == 200
+    assert [item["card_id"] for item in response.json()["advice"]] == ["example-b"]
+
+
+def test_plan_needs_at_least_one_card() -> None:
+    response = client.post("/card/plan", json={"spends": {}, "planned_spend": 100_000})
+
+    assert response.status_code == 400
+
+
 def test_plan_reports_unaffordable_card_as_hold_off() -> None:
     response = client.post("/card/plan", json={"spends": {"example-a": 0}, "planned_spend": 100_000})
 

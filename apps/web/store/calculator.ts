@@ -2,23 +2,27 @@ import type { AllocationPlan } from "@pypo/api-client";
 import { create } from "zustand";
 
 type CalculatorState = {
-  /** 카드 ID별 이번 달 실적 인정 금액. 0은 "모름"이 아니라 "안 씀"으로 본다. */
-  spends: Record<string, number>;
-  plannedSpend: number;
+  /** 등록한 카드 ID → 이번 달 실적 인정 금액. null은 "아직 모름"이라 계산에서 뺀다. 0은 "안 씀"이다. */
+  myCards: Record<string, number | null>;
+  plannedSpend: number | null;
   plan: AllocationPlan | null;
-  setSpend: (cardId: string, amount: number) => void;
-  setPlannedSpend: (amount: number) => void;
+  addCard: (cardId: string) => void;
+  removeCard: (cardId: string) => void;
+  setSpend: (cardId: string, amount: number | null) => void;
+  setPlannedSpend: (amount: number | null) => void;
   setPlan: (plan: AllocationPlan | null) => void;
-  reset: () => void;
 };
 
 export const useCalculator = create<CalculatorState>()((set) => ({
-  spends: {},
-  plannedSpend: 0,
+  myCards: {},
+  plannedSpend: null,
   plan: null,
-  setSpend: (cardId, amount) =>
-    set((state) => ({ spends: { ...state.spends, [cardId]: amount } })),
+  addCard: (cardId) => set((state) => ({ myCards: { ...state.myCards, [cardId]: null } })),
+  removeCard: (cardId) =>
+    set((state) => ({
+      myCards: Object.fromEntries(Object.entries(state.myCards).filter(([id]) => id !== cardId)),
+    })),
+  setSpend: (cardId, amount) => set((state) => ({ myCards: { ...state.myCards, [cardId]: amount } })),
   setPlannedSpend: (plannedSpend) => set({ plannedSpend }),
   setPlan: (plan) => set({ plan }),
-  reset: () => set({ spends: {}, plannedSpend: 0, plan: null }),
 }));

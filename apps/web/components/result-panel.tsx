@@ -53,10 +53,13 @@ function HoldOffRow({ item }: { item: CardAdvice }) {
 export function ResultPanel({
   plan,
   cards,
+  unentered,
   onReset,
 }: {
   plan: AllocationPlan;
   cards: Card[];
+  /** 실적을 입력하지 않아 계산에서 뺀 카드 */
+  unentered: Card[];
   onReset: () => void;
 }) {
   const fills = plan.advice.filter((item) => item.action === "fill");
@@ -102,6 +105,12 @@ export function ResultPanel({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {unentered.length > 0 ? (
+        <p className="mt-4 rounded-xl border border-zinc-200 px-4 py-3 text-xs leading-relaxed text-zinc-500">
+          실적을 입력하지 않아 계산에서 뺐습니다: {unentered.map((card) => card.name).join(", ")}
+        </p>
       ) : null}
 
       <details className="mt-4 border-t border-zinc-100 pt-4">

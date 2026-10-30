@@ -110,7 +110,12 @@ def plan_allocation(
     if len(set(card_ids)) != len(card_ids):
         raise ValueError("카드 ID가 중복되었습니다")
 
-    advice = [evaluate_card(card, spends.get(card.card_id, 0)) for card in cards]
+    # 실적을 모르는 카드를 0원으로 계산하면 "채우세요"가 잘못 나온다 (PRD 6.4).
+    missing = [card.card_id for card in cards if card.card_id not in spends]
+    if missing:
+        raise ValueError(f"실적이 입력되지 않은 카드입니다: {', '.join(missing)}")
+
+    advice = [evaluate_card(card, spends[card.card_id]) for card in cards]
     candidates = [item for item in advice if item.action == "fill"]
 
     if len(candidates) > MAX_CANDIDATE_CARDS:

@@ -23,13 +23,14 @@ function StepLabel({ index, title, hint }: { index: number; title: string; hint:
 }
 
 export default function Home() {
-  const spends = useCalculator((state) => state.spends);
+  const myCards = useCalculator((state) => state.myCards);
   const plannedSpend = useCalculator((state) => state.plannedSpend);
   const plan = useCalculator((state) => state.plan);
+  const addCard = useCalculator((state) => state.addCard);
+  const removeCard = useCalculator((state) => state.removeCard);
   const setSpend = useCalculator((state) => state.setSpend);
   const setPlannedSpend = useCalculator((state) => state.setPlannedSpend);
   const setPlan = useCalculator((state) => state.setPlan);
-  const reset = useCalculator((state) => state.reset);
 
   const catalog = useQuery({ queryKey: ["card-catalog"], queryFn: () => fetchCatalog() });
   const mutation = useMutation({
@@ -38,7 +39,14 @@ export default function Home() {
   });
 
   const cards = catalog.data?.cards ?? [];
-  const canSubmit = plannedSpend > 0 && !mutation.isPending;
+  const registered = cards.filter((card) => card.card_id in myCards);
+  const addable = cards.filter((card) => !(card.card_id in myCards));
+  const unentered = registered.filter((card) => myCards[card.card_id] === null);
+  const spends = Object.fromEntries(
+    Object.entries(myCards).filter((entry): entry is [string, number] => entry[1] !== null),
+  );
+  const canSubmit =
+    Object.keys(spends).length > 0 && plannedSpend !== null && plannedSpend > 0 && !mutation.isPending;
 
   return (
     <main className="mx-auto w-full max-w-md px-4 pb-16 pt-10">
@@ -86,7 +94,7 @@ export default function Home() {
 
       {plan ? (
         <div className="mt-6">
-          <ResultPanel plan={plan} cards={cards} onReset={reset} />
+          <ResultPanel plan={plan} cards={cards} unentered={unentered} onReset={() => setPlan(null)} />
         </div>
       ) : null}
 
@@ -95,26 +103,55 @@ export default function Home() {
           className="mt-6 space-y-3"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!canSubmit) return;
+            if (!canSubmit || plannedSpend === null) return;
             mutation.mutate({ spends, planned_spend: plannedSpend });
           }}
         >
           <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
             <StepLabel
               index={1}
-              title="카드별 이번 달 실적"
-              hint="카드사 앱에 표시된 '이번 달 실적' 숫자를 그대로 넣어 주세요. 총 사용액과 다릅니다."
+              title="내 카드와 이번 달 실적"
+              hint="카드사 앱에 표시된 '이번 달 실적' 숫자를 그대로 넣어 주세요. 총 사용액과 다릅니다. 모르면 비워 두세요. 그 카드는 계산에서 뺍니다."
             />
-            <div className="mt-3 divide-y divide-zinc-100">
-              {cards.map((card) => (
-                <CardRow
-                  key={card.card_id}
-                  card={card}
-                  value={spends[card.card_id] ?? 0}
-                  onChange={(amount) => setSpend(card.card_id, amount)}
-                />
-              ))}
-            </div>
+            {registered.length > 0 ? (
+              <div className="mt-3 divide-y divide-zinc-100">
+                {registered.map((card) => (
+                  <CardRow
+                    key={card.card_id}
+                    card={card}
+                    value={myCards[card.card_id] ?? null}
+                    onChange={(amount) => setSpend(card.card_id, amount)}
+                    onRemove={() => removeCard(card.card_id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 rounded-xl bg-zinc-50 px-4 py-3 text-xs text-zinc-500">
+                아래에서 가지고 있는 카드를 추가해 주세요.
+              </p>
+            )}
+            {addable.length > 0 ? (
+              <>
+                <label htmlFor="add-card" className="sr-only">
+                  카드 추가
+                </label>
+                <select
+                  id="add-card"
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value) addCard(event.target.value);
+                  }}
+                  className="mt-3 h-11 w-full rounded-xl border border-dashed border-zinc-300 bg-white px-3 text-sm text-zinc-600 focus:border-zinc-900 focus:outline-none"
+                >
+                  <option value="">+ 카드 추가</option>
+                  {addable.map((card) => (
+                    <option key={card.card_id} value={card.card_id}>
+                      {card.issuer} · {card.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
           </section>
 
           <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
@@ -150,6 +187,12 @@ export default function Home() {
           >
             {mutation.isPending ? "계산 중" : "계산하기"}
           </button>
+
+          {unentered.length > 0 && Object.keys(spends).length > 0 ? (
+            <p className="px-1 text-[11px] leading-relaxed text-zinc-500">
+              실적을 비워 둔 카드 {unentered.length}장은 계산에서 뺍니다.
+            </p>
+          ) : null}
 
           <p className="px-1 text-[11px] leading-relaxed text-zinc-400">
             입력한 값은 저장하지 않습니다. 계산 결과는 이 화면에서만 쓰입니다.
