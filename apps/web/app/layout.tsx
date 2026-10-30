@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Link from "next/link";
 
 import "./globals.css";
 
@@ -20,6 +21,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko">
       <body className="min-h-dvh font-sans">
         <Providers>{children}</Providers>
+        <footer className="mx-auto w-full max-w-2xl px-4 pb-10">
+          <div className="flex items-center justify-between border-t border-zinc-200 pt-5 text-[11px] text-zinc-400">
+            <span>pypo</span>
+            <Link
+              href="/privacy"
+              className="underline-offset-4 transition hover:text-zinc-600 hover:underline"
+            >
+              개인정보 처리방침
+            </Link>
+          </div>
+        </footer>
       </body>
     </html>
   );
