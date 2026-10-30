@@ -1,16 +1,3 @@
-"""Models for the card benefit allocation calculator.
-
-The calculator only reads what a product disclosure states: monthly spend
-tiers, what each tier pays out, and the note about spend that does not count.
-Card data is curated by hand, so every tier keeps the clause it came from. A
-tier without a clause cannot be constructed.
-
-A tier pays in one of two ways, and a product may use both across its tiers:
-
-- a fixed monthly cap (most Korean cards that raise a ceiling at a threshold)
-- a percentage of the recognized spend, with or without a monthly cap
-"""
-
 from __future__ import annotations
 
 from datetime import date
@@ -29,10 +16,9 @@ AdviceReason = Literal[
     "top_tier",
 ]
 
+CalculationStatus = Literal["eligible", "ineligible", "insufficient_data", "unsupported"]
 
 class Tier(BaseModel):
-    """One monthly spend tier of a card product."""
-
     model_config = ConfigDict(frozen=True)
 
     spend_threshold: int = Field(ge=0, description="이 구간에 들어가는 전월 실적 기준 금액(원)")
@@ -47,6 +33,7 @@ class Tier(BaseModel):
         ge=0,
         description="이 구간의 월 할인한도(원). None이면 한도 없음",
     )
+    eligible_categories: list[str] = Field(default_factory=list, description="혜택 적용 업종 목록 (비어있으면 전 업종)")
     clause: str = Field(min_length=1, description="상품설명서 조항 또는 약관 근거")
 
     @model_validator(mode="after")
@@ -73,8 +60,6 @@ class Tier(BaseModel):
 
 
 class Card(BaseModel):
-    """A card product and its monthly spend tiers."""
-
     model_config = ConfigDict(frozen=True)
 
     card_id: str = Field(min_length=1)
@@ -98,8 +83,6 @@ class Card(BaseModel):
 
 
 class CardAdvice(BaseModel):
-    """What to do with one card for the rest of this month."""
-
     card_id: str
     name: str
     recognized_spend: int = Field(ge=0, description="이번 달 실적 인정 금액(원)")
@@ -117,8 +100,6 @@ class CardAdvice(BaseModel):
 
 
 class AllocationPlan(BaseModel):
-    """The allocation result shown on the single result screen."""
-
     planned_spend: int = Field(ge=0, description="이번 달 남은 예상 지출(원)")
     advice: list[CardAdvice]
     total_gain: int = Field(default=0, ge=0, description="배분으로 늘어나는 혜택 합계(원)")

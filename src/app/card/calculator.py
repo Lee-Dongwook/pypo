@@ -1,26 +1,15 @@
-"""Deterministic allocation of the rest of this month's card spend.
-
-The question the calculator answers is narrow on purpose:
-
-    "남은 지출을 어느 카드에 몰아야 이번 달 구간을 넘기고, 넘기면 얼마가 느는가?"
-
-There is no model here. Given the tiers from a product disclosure and the
-amount the user already spent, the answer is a small subset-sum problem over
-at most a handful of cards, so we solve it exactly instead of approximating.
-Every number in the result traces back to a tier that carries its clause.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pydantic import BaseModel, Field
+from decimal import Decimal
 
-from .schemas import AllocationPlan, Card, CardAdvice
+from .schemas import AllocationPlan, CalculationStatus, Card, CardAdvice
 
 MAX_CANDIDATE_CARDS = 20
 
 
 def _current_tier_index(card: Card, recognized_spend: int) -> int | None:
-    """Index of the highest tier the spend already reaches, or None below the first."""
     reached: int | None = None
     for index, tier in enumerate(card.tiers):
         if recognized_spend >= tier.spend_threshold:
@@ -31,7 +20,6 @@ def _current_tier_index(card: Card, recognized_spend: int) -> int | None:
 
 
 def evaluate_card(card: Card, recognized_spend: int) -> CardAdvice:
-    """Evaluate one card. The returned action is provisional until the budget is known."""
     if recognized_spend < 0:
         raise ValueError("실적 금액은 0 이상이어야 합니다")
 
@@ -87,11 +75,6 @@ def evaluate_card(card: Card, recognized_spend: int) -> CardAdvice:
 
 
 def _best_selection(gaps: Sequence[int], gains: Sequence[int], budget: int) -> tuple[int, int, int]:
-    """Exact subset search.
-
-    Returns (mask, gain, spent). Ties prefer the cheaper combination, because
-    unspent budget stays with the user.
-    """
     best_mask = 0
     best_gain = 0
     best_spent = 0
@@ -119,12 +102,6 @@ def plan_allocation(
     spends: Mapping[str, int],
     planned_spend: int,
 ) -> AllocationPlan:
-    """Decide which cards to fill with the remaining planned spend.
-
-    A card is filled only when the spend is already planned. The calculator never
-    suggests spending extra money to reach a tier, so a card that is individually
-    unaffordable is reported as `hold_off` instead of a recommendation.
-    """
     if planned_spend < 0:
         raise ValueError("남은 예상 지출은 0 이상이어야 합니다")
 
@@ -162,3 +139,75 @@ def plan_allocation(
         usage=usage,
         leftover=planned_spend - usage,
     )
+
+class PurchaseEvaluation(BaseModel):
+    card_id: str
+    name: str
+    status: CalculationStatus
+    expected_discount: int = Field(ge=0, description="예상 할인액(원)")
+    current_tier_threshold: int | None = None
+    applied_discount_rate: Decimal | None = None
+    remaining_cap: int | None = None
+    clause: str
+    reason: str
+
+def evaluate_single_purchase(
+    card: Card,
+    recognized_spend: int,
+    category: str,
+    amount: int,
+    remaining_cap: int | None = None,
+) -> PurchaseEvaluation:
+    if amount <= 0:
+        raise ValueError("결제 금액은 0보다 커야 합니다")
+    
+    # 1. 전월 실적 구간 확인
+    index = _current_tier_index(card, recognized_spend)
+    if index is None:
+        return PurchaseEvaluation(
+            card_id=card.card_id,
+            name=card.name,
+            status="ineligible",
+            expected_discount=0,
+            clause=card.tiers[0].clause if card.tiers else "",
+            reason="전월 실적 미달로 혜택 구간에 미치지 않습니다.",
+        )
+
+    tier = card.tiers[index]
+
+    # 2. 업종 적격성 확인 (지정된 업종이 있고 해당 업종에 포함되지 않으면 제외)
+    if tier.eligible_categories and category not in tier.eligible_categories:
+        return PurchaseEvaluation(
+            card_id=card.card_id,
+            name=card.name,
+            status="ineligible",
+            expected_discount=0,
+            current_tier_threshold=tier.spend_threshold,
+            clause=tier.clause,
+            reason=f"결제 업종({category})이 해당 카드의 혜택 적용 대상이 아닙니다.",
+        )
+    
+    # 3. 할인액 계산
+    if tier.discount_rate is None:
+        # 정액/고정 한도형인 경우 (단일 결제 할인 적용 방식에 따라 다름)
+        theoretical = tier.discount_cap or 0
+    else:
+        theoretical = int(Decimal(amount) * tier.discount_rate)
+    
+    # 4. 할인한도 제한 적용
+    cap_limit = remaining_cap if remaining_cap is not None else tier.discount_cap
+    expected_discount = theoretical if cap_limit is None else min(theoretical, cap_limit)
+
+    return PurchaseEvaluation(
+        card_id=card.card_id,
+        name=card.name,
+        status="eligible",
+        expected_discount=max(0, expected_discount),
+        current_tier_threshold=tier.spend_threshold,
+        applied_discount_rate=tier.discount_rate,
+        remaining_cap=cap_limit,
+        clause=tier.clause,
+        reason="조건을 충족하여 예상 할인이 적용됩니다.",
+    )
+    
+
