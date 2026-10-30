@@ -36,7 +36,7 @@ def evaluate_card(card: Card, recognized_spend: int) -> CardAdvice:
         raise ValueError("실적 금액은 0 이상이어야 합니다")
 
     index = _current_tier_index(card, recognized_spend)
-    current_cap = card.tiers[index].discount_cap if index is not None else 0
+    current_benefit = card.tiers[index].benefit(recognized_spend) if index is not None else 0
 
     next_index = 0 if index is None else index + 1
     if next_index >= len(card.tiers):
@@ -44,22 +44,28 @@ def evaluate_card(card: Card, recognized_spend: int) -> CardAdvice:
             card_id=card.card_id,
             name=card.name,
             recognized_spend=recognized_spend,
-            current_cap=current_cap,
+            current_benefit=current_benefit,
             action="skip",
             reason="top_tier",
         )
 
     next_tier = card.tiers[next_index]
     gap = next_tier.spend_threshold - recognized_spend
-    incremental_cap = next_tier.discount_cap - current_cap
 
-    if incremental_cap <= 0:
+    # 할인율형은 실적 전체에 붙으므로, 넘기는 데 필요한 금액까지만 쓴다고 보고
+    # 계산한다. 실제 지출이 더 크면 혜택도 커지므로 이 값은 하한이다.
+    next_benefit = next_tier.benefit(next_tier.spend_threshold)
+    gain = next_benefit - current_benefit
+    gain_is_minimum = next_tier.discount_rate is not None
+
+    if gain <= 0:
         return CardAdvice(
             card_id=card.card_id,
             name=card.name,
             recognized_spend=recognized_spend,
-            current_cap=current_cap,
+            current_benefit=current_benefit,
             next_threshold=next_tier.spend_threshold,
+            next_benefit=next_benefit,
             gap=gap,
             action="skip",
             reason="no_gain",
@@ -69,10 +75,12 @@ def evaluate_card(card: Card, recognized_spend: int) -> CardAdvice:
         card_id=card.card_id,
         name=card.name,
         recognized_spend=recognized_spend,
-        current_cap=current_cap,
+        current_benefit=current_benefit,
         next_threshold=next_tier.spend_threshold,
+        next_benefit=next_benefit,
         gap=gap,
-        incremental_cap=incremental_cap,
+        incremental_gain=gain,
+        gain_is_minimum=gain_is_minimum,
         action="fill",
         reason="reachable",
     )
@@ -131,7 +139,7 @@ def plan_allocation(
         raise ValueError(f"한 번에 계산할 수 있는 카드는 {MAX_CANDIDATE_CARDS}장까지입니다")
 
     gaps = [item.gap or 0 for item in candidates]
-    gains = [item.incremental_cap for item in candidates]
+    gains = [item.incremental_gain for item in candidates]
     mask, total_gain, usage = _best_selection(gaps, gains, planned_spend)
 
     chosen = {candidates[bit].card_id for bit in range(len(candidates)) if mask >> bit & 1}

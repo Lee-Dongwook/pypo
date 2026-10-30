@@ -7,7 +7,8 @@
 
 export type Tier = {
   spend_threshold: number
-  discount_cap: number
+  discount_rate: number | null
+  discount_cap: number | null
   clause: string
 }
 
@@ -18,6 +19,7 @@ export type Card = {
   tiers: Tier[]
   as_of: string
   excluded_spend_note: string
+  source_url: string | null
 }
 
 export type Catalog = {
@@ -39,10 +41,12 @@ export type CardAdvice = {
   card_id: string
   name: string
   recognized_spend: number
-  current_cap: number
+  current_benefit: number
   next_threshold: number | null
+  next_benefit: number | null
   gap: number | null
-  incremental_cap: number
+  incremental_gain: number
+  gain_is_minimum: boolean
   action: AdviceAction
   reason: AdviceReason
 }

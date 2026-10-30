@@ -1,28 +1,36 @@
 "use client";
 
-import type { AllocationPlan, Card, CardAdvice } from "@pypo/api-client";
+import type { AllocationPlan, Card, CardAdvice, Tier } from "@pypo/api-client";
 import { formatWon } from "@pypo/api-client";
 
 const SKIP_LABEL: Record<string, string> = {
   lower_priority: "다른 카드가 더 이득입니다",
-  no_gain: "구간이 올라가도 한도는 그대로입니다",
+  no_gain: "구간이 올라가도 혜택은 그대로입니다",
   top_tier: "이미 최고 구간입니다",
 };
 
+function tierLabel(tier: Tier): string {
+  if (tier.discount_rate === null) return formatWon(tier.discount_cap ?? 0);
+  const percent = `${Number((tier.discount_rate * 100).toFixed(2))}%`;
+  return tier.discount_cap === null ? `${percent} · 한도 없음` : `${percent} · 최대 ${formatWon(tier.discount_cap)}`;
+}
+
 function FillRow({ item }: { item: CardAdvice }) {
-  const nextCap = item.current_cap + item.incremental_cap;
+  const nextBenefit = item.next_benefit ?? item.current_benefit + item.incremental_gain;
 
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-sm font-semibold text-emerald-950">{item.name}에 쓰세요</p>
         <p className="shrink-0 text-sm font-semibold tabular-nums text-emerald-700">
-          +{formatWon(item.incremental_cap)}
+          {item.gain_is_minimum ? "최소 " : "+"}
+          {formatWon(item.incremental_gain)}
         </p>
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-emerald-900/70">
-        {formatWon(item.gap ?? 0)} 더 쓰면 {formatWon(item.next_threshold ?? 0)} 구간 · 한도{" "}
-        {formatWon(item.current_cap)} → {formatWon(nextCap)}
+        {formatWon(item.gap ?? 0)} 더 쓰면 {formatWon(item.next_threshold ?? 0)} 구간 · 혜택{" "}
+        {formatWon(item.current_benefit)} → {item.gain_is_minimum ? "최소 " : ""}
+        {formatWon(nextBenefit)}
       </p>
     </div>
   );
@@ -110,7 +118,7 @@ export function ResultPanel({
                 <ul className="mt-1 space-y-0.5 text-zinc-400">
                   {card.tiers.map((tier) => (
                     <li key={tier.spend_threshold}>
-                      {formatWon(tier.spend_threshold)} / {formatWon(tier.discount_cap)} — {tier.clause}
+                      {formatWon(tier.spend_threshold)} / {tierLabel(tier)} — {tier.clause}
                     </li>
                   ))}
                 </ul>
