@@ -1,5 +1,5 @@
-from contextlib import contextmanager
-from typing import Iterator
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncGenerator, Iterator
 
 from neo4j import Driver, GraphDatabase, Session
 
@@ -26,6 +26,24 @@ def get_session() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+@asynccontextmanager
+async def get_context_neo4j_session() -> AsyncGenerator[AsyncTransaction]:
+    if graph_driver is None:
+        initialize_neo4j()
+    
+    driver = cast("AsyncDriver", graph_driver)
+    async with driver.session(database=graph_database) as session:
+        tx = await session.begin_transaction()
+
+        try:
+            yield tx
+            await tx.commit()
+        except Exception:
+            await tx.rollback()
+            raise
+        finally:
+            await tx.close()
 
 
 def close_driver() -> None:
