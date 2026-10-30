@@ -1,9 +1,14 @@
-from typing import Any, Literal
-import typing_extensions
+from __future__ import annotations
 
-class _TaskModels(typing_extensions.TypedDict, total=False):
-    search_model: Literal["openai", "gemini", "anthropic"] | str    
+from typing import TypedDict
 
-class GraphConfig(_TaskModels, total=False):
-    configurable: dict[str, Any]
-    thread_id: str
+
+class GraphConfig(TypedDict, total=False):
+    """Values the engine graphs read from ``RunnableConfig["configurable"]``.
+
+    ``search_model`` accepts either a provider name (``"openai"``) or a
+    ``"provider:model"`` reference (``"openai:gpt-4.1-mini"``). The provider
+    alone is resolved to the default model for that provider.
+    """
+
+    search_model: str

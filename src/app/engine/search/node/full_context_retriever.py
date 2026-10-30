@@ -1,74 +1,88 @@
+from __future__ import annotations
+
+import asyncio
 import logging
-import textwrap
 from typing import Literal
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 from neo4j.exceptions import Neo4jError
 
-from ....shared.neo4j import get_context_neo4j_session
+from src.app.shared.neo4j import get_async_session
+
+from ..queries import CREATE_FULLTEXT_INDEX, DEFAULT_RESULT_LIMIT, FULLTEXT_SEARCH
 from ..state import SearchSubgraphState
 
 logger = logging.getLogger(__name__)
 
-_INDEX = (
-    "CREATE FULLTEXT INDEX combindedIndex IF NOT EXISTS FOR (n:Link|Memo|File) "
-    f"ON EACH [n.title, n.tags, n.description] OPTIONS {indexConfig: {repr(fulltext.analyzer): 'cjk'}}"
-)
+_index_lock = asyncio.Lock()
+_index_ready = False
 
-_indexed = False
+
+async def _ensure_fulltext_index() -> None:
+    """Create the full-text index once per process.
+
+    The index is normally created by `make neo4j-init`; this keeps a fresh
+    environment working without a manual step. The lock prevents two concurrent
+    searches from both issuing DDL.
+    """
+    global _index_ready
+    if _index_ready:
+        return
+
+    async with _index_lock:
+        if _index_ready:
+            return
+        try:
+            async with get_async_session() as session:
+                await (await session.run(CREATE_FULLTEXT_INDEX)).consume()
+        except Neo4jError as err:
+            # A permanent failure (bad syntax, missing privilege) will not fix
+            # itself; keep logging it on the first search, then stop retrying.
+            _index_ready = not err.is_retryable()
+            logger.warning("Neo4j refused to create the full-text index", exc_info=True)
+            return
+        except Exception:
+            logger.warning("Could not create the full-text index", exc_info=True)
+            return
+        _index_ready = True
+
 
 async def full_context_retriever(
-    state: SearchSubgraphState, config: RunnableConfig
+    state: SearchSubgraphState,
+    config: RunnableConfig,
 ) -> Command[Literal["chunk_context_retriever"]]:
-    context_query = state.get("context_query") or ""
+    context_query = (state.get("context_query") or "").strip()
     user_uuid = state.get("user_uuid") or ""
 
     if not context_query:
         raise ValueError("state needs context_query")
-    
-    if not user_uuid: 
+    if not user_uuid:
         raise ValueError("state needs user_uuid")
-    
-    query = textwrap.dedent("""
-        CALL db.index.fulltext.queryNodes('combinedIndex', $kw) YIELD node, score
-        WHERE node.user_uuid = $user_uuid
-        RETURN elementId(node) AS node_id,
-            node.title AS title,
-            node.url AS url,
-            node.description AS description,
-            node.tags AS tags,
-            node.created_at AS created_at,
-            score
-        ORDER BY score DESC
-        LIMIT 5
-    """)
 
-    params = {"kw": context_query, "user_uuid": user_uuid}
+    await _ensure_fulltext_index()
 
-    global _indexed
-    if not _indexed:
-        try:
-            async with get_context_neo4j_session() as graph_db:
-                await (await graph_db.run(_INDEX)).consume()
-            _indexed = True
-        except Neo4jError as err:
-            _indexed = not err.is_retryable()
-            logger.warning("Graph refused to create full-text index", exc_info=True)
-        except Exception:
-            logger.warning("Couldn't create full text index", exc_info=True)
+    params = {
+        "kw": context_query,
+        "user_uuid": user_uuid,
+        "limit": DEFAULT_RESULT_LIMIT,
+    }
+
     try:
-        async with get_context_neo4j_session() as graph_db:
-            result = await graph_db.run(query, params)
+        async with get_async_session() as session:
+            result = await session.run(FULLTEXT_SEARCH, params)
             results = [record.data() async for record in result]
     except Exception:
         logger.exception("Neo4j full-text search failed")
-        return Command(goto="chunk_context_retriever", update={"retrieval_results": [], "retrieval_failed": True})
-    
+        return Command(
+            goto="chunk_context_retriever",
+            update={"retrieval_results": [], "retrieval_failed": True},
+        )
+
     return Command(
         goto="chunk_context_retriever",
-        update={
-            "retrieval_results": results,
-            "retrieval_failed": False,
-        }
+        update={"retrieval_results": results, "retrieval_failed": False},
     )
+
+
+__all__ = ["full_context_retriever"]

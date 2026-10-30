@@ -1,4 +1,4 @@
-.PHONY: dev install clean test lint migrate neo4j-init
+.PHONY: dev install clean test lint migrate neo4j-init seed-search
 
 install:
 	uv run python scripts/patches.py
@@ -14,6 +14,9 @@ migrate:
 
 neo4j-init:
 	uv run python -m scripts.neo4j.init
+
+seed-search:
+	uv run python -m scripts.neo4j.seed_search_graph
 
 dev:
 	@if [ -f .env ]; then \

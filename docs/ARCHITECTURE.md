@@ -463,6 +463,44 @@ Agent의 `workflow`는 버전이 있는 JSON DSL로 정의하고, `GraphBuilder`
 - 컨텍스트는 트리플 단위로 압축하고, 각 사실에 IRI와 출처를 붙입니다.
 - 토큰 예산을 넘으면 그래프 중심성이 낮은 사실부터 버립니다.
 
+### 8.7 검색 서브그래프 (`src/app/engine/search`)
+
+지식 검색은 `create_search_subgraph()`가 컴파일하는 독립 LangGraph 서브그래프로 실행합니다.
+
+```text
+START
+  └─ full_context_extractor      질문 → Lucene 질의 (또는 입력 질의 그대로 사용)
+       └─ full_context_retriever  Neo4j full-text index 조회 (user_uuid 범위)
+            └─ chunk_context_retriever  중복 제거·정규화, 결과 없음/실패 시 END
+                 └─ search_insight      메시지 + structured_response 생성 → END
+```
+
+- 입력 계약은 `SearchInput`입니다. `user_question`이 있으면 그대로 질의로 쓰고, 없으면 `messages`의 마지막 human 메시지를 LLM으로 재작성합니다.
+- `user_uuid`는 필수 검색 범위입니다. 인덱스는 `Link|Memo|File`의 `title/tags/description`을 CJK analyzer로 색인하며, 이름과 필드 목록은 `queries.py`와 `scripts/neo4j/init.cypher`가 공유합니다.
+- 노드는 `Command`로 라우팅합니다. 검색 실패나 0건은 `chunk_context_retriever`에서 바로 `END`로 단락됩니다.
+- 출력은 `search_results`(정규화된 문서 목록)와 `structured_response`입니다. 각 결과에는 `node_id`, `title`, `url`, `description`, `score`, `tags`, `created_at`이 포함됩니다.
+- 모델은 `config["configurable"]["search_model"]` 또는 `SEARCH_MODEL`로 선택합니다. `provider` 또는 `provider:model` 형식을 받으며, provider 패키지(예: `langchain-openai`)가 설치되어 있어야 합니다.
+
+#### 개인 지식 그래프 (`Link`, `Memo`, `File`)
+
+검색 대상 노드는 `src/app/engine/search/items.py`의 모델과 `src/app/engine/search/graph.py`의 `KnowledgeGraph`가 함께 관리합니다.
+
+```text
+(:User {uuid})
+  ├─[:OWNS]→ (:Link)   {uuid, user_uuid, title, url, description, tags, created_at, updated_at}
+  ├─[:OWNS]→ (:Memo)   {uuid, user_uuid, title, content, description, tags, created_at, updated_at}
+  └─[:OWNS]→ (:File)   {uuid, user_uuid, title, url, mime_type, size_bytes, description, tags, ...}
+
+(:Memo)-[:ATTACHED_TO]→(:Link|:File)
+(:Link)-[:REFERENCES]→(:File)
+(:Link|:Memo|:File)-[:TAGGED]→(:Tag {user_uuid, name})
+```
+
+- `created_at`/`updated_at`은 epoch milliseconds입니다. 검색 결과 포매터가 `/1000` 후 KST로 변환합니다.
+- `KnowledgeGraph.upsert()`는 라벨별 노드를 `MERGE`하고, 소유자 엣지와 태그 엣지를 함께 갱신합니다. 재-upsert 시 `created_at`은 보존하고 `updated_at`만 서버 시각으로 덮어씁니다.
+- 다른 사용자의 `uuid`를 재사용하려 하면 `PermissionError`로 거부합니다. 조회·삭제·관계 생성도 모두 `user_uuid`로 범위를 제한합니다.
+- 제약조건과 인덱스는 `scripts/neo4j/init.cypher`에 있습니다. 데모 데이터는 `make neo4j-init && make seed-search`로 넣을 수 있습니다.
+
 ## 9. 적재 파이프라인
 
 ### 파일 (Turtle / OWL / JSON-LD)

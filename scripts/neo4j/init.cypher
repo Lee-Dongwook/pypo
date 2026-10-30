@@ -26,3 +26,34 @@ FOR ()-[r:REL]-() ON (r.source_graph);
 
 CREATE INDEX rel_tenant_version IF NOT EXISTS
 FOR ()-[r:REL]-() ON (r.tenant, r.ontology_version);
+
+// Knowledge search: keep this name and field list in sync with
+// src/app/engine/search/queries.py.
+CREATE FULLTEXT INDEX combinedIndex IF NOT EXISTS
+FOR (n:Link|Memo|File) ON EACH [n.title, n.tags, n.description]
+OPTIONS {indexConfig: {`fulltext.analyzer`: 'cjk'}};
+
+// Personal knowledge graph written by src/app/engine/search/graph.py.
+CREATE CONSTRAINT user_uuid_unique IF NOT EXISTS
+FOR (u:User) REQUIRE u.uuid IS UNIQUE;
+
+CREATE CONSTRAINT link_uuid_unique IF NOT EXISTS
+FOR (n:Link) REQUIRE n.uuid IS UNIQUE;
+
+CREATE CONSTRAINT memo_uuid_unique IF NOT EXISTS
+FOR (n:Memo) REQUIRE n.uuid IS UNIQUE;
+
+CREATE CONSTRAINT file_uuid_unique IF NOT EXISTS
+FOR (n:File) REQUIRE n.uuid IS UNIQUE;
+
+CREATE CONSTRAINT tag_user_name_unique IF NOT EXISTS
+FOR (t:Tag) REQUIRE (t.user_uuid, t.name) IS UNIQUE;
+
+CREATE INDEX link_user_created IF NOT EXISTS
+FOR (n:Link) ON (n.user_uuid, n.created_at);
+
+CREATE INDEX memo_user_created IF NOT EXISTS
+FOR (n:Memo) ON (n.user_uuid, n.created_at);
+
+CREATE INDEX file_user_created IF NOT EXISTS
+FOR (n:File) ON (n.user_uuid, n.created_at);

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import event
+from sqlalchemy.orm import Mapper  # noqa: F401  # registers the mapper "init" event used below
 
 from .utils import uuid7
 
