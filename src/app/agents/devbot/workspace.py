@@ -18,6 +18,8 @@ from .guards import BRANCH_PREFIX
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
+MAX_FILE_CHARS = 8000
+"""이 값보다 긴 파일만 이슈가 필요로 한 정의를 발췌해 LLM 입력에 쓴다. 작은 파일은 통째로 보낸다."""
 
 
 @dataclass(frozen=True)
@@ -47,9 +49,52 @@ def remove(repo: Path, path: Path) -> None:
     _git(repo, "worktree", "remove", "--force", str(path))
 
 
-def read(root: Path, path: str) -> str:
+def file_content(root: Path, path: str, hint: str) -> str:
+    """수정 대상 파일 내용. 파일이 크면 이슈가 필요로 한 부분만 발췌해 돌려준다.
+
+    LLM 입력을 줄이는 게 목적이고, 검증이 정확성을 정하므로 발췌할 게 없으면 원본을 돌려준다.
+    """
     file = root / path
-    return file.read_text(encoding="utf-8") if file.exists() else "(아직 없는 새 파일)\n"
+    if not file.exists():
+        return "(아직 없는 새 파일)\n"
+    return excerpt(file.read_text(encoding="utf-8"), hint)
+
+
+def excerpt(source: str, hint: str) -> str:
+    """큰 파일은 이슈가 필요로 한 정의만 발췌해 반환한다. 작거나 발췌할 게 없으면 원본을 돌려준다."""
+    if len(source) <= MAX_FILE_CHARS:
+        return source
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source
+    defs = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    }
+    chosen = {name for name in defs if name in set(re.findall(r"\w+", hint))}
+    for name in list(chosen):
+        chosen |= {
+            other
+            for other in defs
+            if other not in chosen and re.search(rf"\b{other}\b", ast.get_source_segment(source, defs[name]) or "")
+        }
+    selected = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) and node.name in chosen
+    ]
+    parts = [ast.get_source_segment(source, node) or "" for node in selected]
+    text = "\n\n".join(parts)
+    if not parts or len(text) >= len(source):
+        return source
+    imports = "\n".join(
+        ast.get_source_segment(source, node) or ""
+        for node in tree.body
+        if isinstance(node, ast.Import | ast.ImportFrom)
+    ).rstrip("\n")
+    return f"{imports}\n\n{text}\n" if imports else text + "\n"
 
 
 def references(root: Path, targets: tuple[str, ...]) -> list[str]:

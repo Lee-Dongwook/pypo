@@ -263,6 +263,33 @@ def test_reference_snippets_keep_only_what_the_issue_needs(tmp_path: Path) -> No
     assert "unrelated" not in text
 
 
+def test_large_target_files_are_excerpted_for_the_llm(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    source = "\n\n\n".join(f"def helper_{i}(value):\n    return value + {i}\n" for i in range(300))
+
+    (tmp_path / "src" / "big.py").write_text(source)
+
+    text = workspace.file_content(tmp_path, "src/big.py", "helper_7 추가")
+
+    assert "def helper_7" in text
+    assert "def helper_42" not in text
+
+
+def test_small_target_files_are_sent_in_full(tmp_path: Path) -> None:
+    (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+
+    assert workspace.file_content(tmp_path, "calc.py", "add") == "def add(a, b):\n    return a + b\n"
+
+
+def test_unmatched_hint_keeps_the_whole_file(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    source = "\n\n\n".join(f"def helper_{i}(value):\n    return value + {i}\n" for i in range(300))
+
+    (tmp_path / "src" / "big.py").write_text(source)
+
+    assert workspace.file_content(tmp_path, "src/big.py", "전혀 모르는 함수") == source
+
+
 def test_long_question_with_a_plan_is_a_format_error_not_a_question(tmp_path: Path) -> None:
     rambling = "QUESTION: 이슈를 이해했습니다.\n" + "\n".join(f"{i}. 테스트를 추가합니다" for i in range(6))
 
