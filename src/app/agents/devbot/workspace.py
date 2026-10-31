@@ -321,11 +321,14 @@ def sandboxed_python(image: str, root: Path) -> list[str]:
 
 
 def run_checks(root: Path, python: list[str]) -> list[Check]:
-    """ruff와 pytest. `python`은 Python을 실행하는 명령이다 (보통 `sandboxed_python`)."""
+    """ruff와 pytest. `python`은 Python을 실행하는 명령이다 (보통 `sandboxed_python`).
+
+    ruff는 `--fix`로 돌린다. 안 쓰는 import, import 순서처럼 기계로 고칠 수 있는 건 모델을 다시 부르지 않는다.
+    """
     # ponytail: 웹(apps/, packages/)을 건드리는 이슈는 worktree에 node_modules가 없어 typecheck를 못 돌린다. M2 전에 해결.
     checks = []
     for name, args in [
-        ("ruff", ["-m", "ruff", "check", "."]),
+        ("ruff", ["-m", "ruff", "check", "--fix", "."]),
         ("pytest", ["-m", "pytest", "-q", "-p", "no:cacheprovider"]),
     ]:
         result = _run([*python, *args], root)
