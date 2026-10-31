@@ -291,3 +291,6 @@ _STATUS_ORDER = {"eligible": 0, "ineligible": 1, "insufficient_data": 2, "unsupp
 def rank_purchase_evaluations(evaluations: Sequence[PurchaseEvaluation]) -> list[PurchaseEvaluation]:
     """PRD 8.6: 계산 가능한 카드를 할인액순으로, 계산 불가 카드는 뒤에 따로 둔다. 동률은 입력 순서 유지."""
     return sorted(evaluations, key=lambda e: (_STATUS_ORDER[e.status], -(e.expected_discount or 0)))
+
+
+# Remove the redefinition of PurchaseEvaluation
