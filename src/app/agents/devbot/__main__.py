@@ -5,7 +5,8 @@
 
 통과하면 `pypo/*` 브랜치에 푸시하고 PR을 연다. 실패하거나 질문이 있으면 이슈에 코멘트와 라벨을 남긴다.
 `--dry-run`이면 GitHub에는 아무것도 쓰지 않고 결과와 변경 내용만 출력한다.
-`eval`은 `agent/evals/cases.json`의 지난 이슈를 그때 커밋에서 다시 풀어 본다. 하네스를 바꾼 뒤 퇴보했는지 본다.
+`eval`은 `agent/evals/cases.json`의 이슈를 실패하는 테스트가 든 커밋에서 다시 풀어 본다. 하네스를 바꾼 뒤 퇴보했는지 본다.
+이슈 본문은 파일에 있어서 GitHub를 읽지 않는다. 지난 이슈와 작업 종류별 연습 이슈(900번대)가 섞여 있다.
 """
 
 from __future__ import annotations
@@ -77,11 +78,13 @@ def _eval(model, python) -> None:
     passed = 0
     for case in cases:
         started = time.monotonic()
-        state = build_graph(model, REPO, python, base=case["base"]).invoke({"issue": case["issue"]})
+        issue = {key: case[key] for key in ("number", "title", "body")}
+        graph = build_graph(model, REPO, python, base=case["base"], issues=lambda _, issue=issue: [issue])
+        state = graph.invoke({"issue": case["number"]})
         if worktree := state.get("worktree"):
             workspace.remove(REPO, Path(worktree))
         passed += state["outcome"] == "passed"
-        print(f"[pypo] eval #{case['issue']} ({case['kind']}): {state['outcome']}, "
+        print(f"[pypo] eval #{case['number']} ({case['kind']}): {state['outcome']}, "
               f"LLM {state.get('calls', 0)}회, {time.monotonic() - started:.0f}s")
     print(f"[pypo] eval: {passed}/{len(cases)} 통과")
 
