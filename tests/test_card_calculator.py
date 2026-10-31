@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.app.card.calculator import (
+    analyze_card_tier,
     evaluate_card,
     evaluate_single_purchase,
     plan_allocation,
@@ -214,3 +215,36 @@ def test_ranking_puts_uncomputable_cards_last() -> None:
     ranked = [e.card_id for e in rank_purchase_evaluations(evaluations)]
 
     assert ranked == ["high", "low", "none", "flat"]
+
+
+def test_tier_analysis_at_zero_spend_targets_first_threshold():
+    card = make_card()
+    result = analyze_card_tier(card, 0)
+
+    assert result.current_tier_index is None
+    assert result.next_threshold == 300_000
+    assert result.remaining_spend_to_next_tier == 300_000
+
+
+def test_tier_analysis_exactly_at_threshold_moves_to_next():
+    card = make_card()
+    result = analyze_card_tier(card, 300_000)
+
+    assert result.current_tier_index == 0
+    assert result.next_threshold == 500_000
+    assert result.incremental_cap_increase == 5_000
+
+
+def test_tier_analysis_at_top_tier_has_no_next():
+    card = make_card()
+    result = analyze_card_tier(card, 1_000_000)
+
+    assert result.is_top_tier is True
+    assert result.next_threshold is None
+    assert result.remaining_spend_to_next_tier == 0
+
+
+def test_tier_analysis_rejects_negative_spend():
+    card = make_card()
+    with pytest.raises(ValueError, match="실적 금액은 0 이상이어야 합니다"):
+        analyze_card_tier(card, -1)
