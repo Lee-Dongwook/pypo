@@ -162,3 +162,16 @@ def test_tier_analysis_api_rejects_negative_spend():
     )
 
     assert response.status_code == 422
+
+
+def test_spend_over_one_hundred_million_is_rejected() -> None:
+    response = client.post("/card/plan", json={"spends": {"example-a": 100_000_001}, "planned_spend": 0})
+
+    assert response.status_code == 422
+    assert "금액은 1억 원 이하여야 합니다: example-a" in response.text
+
+
+def test_spend_of_exactly_one_hundred_million_is_accepted() -> None:
+    response = client.post("/card/plan", json={"spends": {"example-a": 100_000_000}, "planned_spend": 0})
+
+    assert response.status_code == 200
