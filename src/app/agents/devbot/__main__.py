@@ -1,8 +1,9 @@
 """pypo 실행.
 
-    uv run python -m src.app.agents.devbot day --dry-run [--issue N] [--base origin/main] [--keep]
+    uv run python -m src.app.agents.devbot day [--dry-run] [--issue N] [--base origin/main] [--keep]
 
-M1은 미리 보기만 한다. GitHub에는 아무것도 쓰지 않고, 결과와 변경 내용을 출력한다.
+통과하면 `pypo/*` 브랜치에 푸시하고 PR을 연다. 실패하거나 질문이 있으면 이슈에 코멘트와 라벨을 남긴다.
+`--dry-run`이면 GitHub에는 아무것도 쓰지 않고 결과와 변경 내용만 출력한다.
 """
 
 from __future__ import annotations
@@ -15,8 +16,9 @@ from pathlib import Path
 from src.app.engine.models import resolve_chat_model
 from src.app.shared.settings import settings
 
-from . import workspace
-from .graph import build_graph
+from . import github, workspace
+from .graph import DevbotState, build_graph
+from .guards import MAX_OPEN_PRS, branch_name
 
 REPO = Path(__file__).resolve().parents[4]
 
@@ -27,10 +29,29 @@ def _model(reference: str):
     return resolve_chat_model(reference, **extra)
 
 
+def _publish(state: DevbotState, root: Path | None, base: str) -> None:
+    """결과를 GitHub에 남긴다 (docs/DEVBOT.md 4절 5단계)."""
+    task, outcome = state.get("task"), state["outcome"]
+    if task is None:
+        return
+    if outcome == "passed" and root is not None:
+        branch = branch_name(task.number, task.title)
+        workspace.push(root, branch, github.commit_message(task))
+        body = github.pr_body(task, state.get("checks", []), state["attempts"])
+        print(f"[pypo] PR: {github.create_pr(task, branch, base.removeprefix('origin/'), body)}")
+    elif outcome == "question":
+        github.comment(task.number, f"작업 전에 확인이 필요합니다.\n\n{state['message']}\n\n"
+                       f"답을 남기고 `{github.QUESTION}` 라벨을 지우면 다시 작업합니다.", github.QUESTION)
+    elif outcome == "failed":
+        github.comment(task.number, f"{state['attempts']}번 시도했지만 검증을 통과하지 못했습니다. "
+                       f"이슈를 더 작게 나누거나 직접 처리해 주세요.\n\n## 마지막 에러\n\n"
+                       f"```\n{state['message'][-2000:]}\n```", github.FAILED)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pypo")
     parser.add_argument("command", choices=["day"])
-    parser.add_argument("--dry-run", action="store_true", required=True, help="M1은 미리 보기만 지원합니다")
+    parser.add_argument("--dry-run", action="store_true", help="GitHub에 쓰지 않고 결과만 출력")
     parser.add_argument("--issue", type=int, help="이 이슈만 처리 (기본: bot-ready 중 가장 오래된 것)")
     parser.add_argument("--base", default="origin/main", help="작업을 시작할 커밋")
     parser.add_argument("--model", default=settings.devbot_model)
@@ -44,6 +65,8 @@ def main() -> None:
         image = workspace.sandbox_image(REPO)
     except RuntimeError as error:
         raise SystemExit(f"[pypo] {error}") from error
+    if not args.dry_run and len(waiting := github.open_pr_branches()) >= MAX_OPEN_PRS:
+        raise SystemExit(f"[pypo] 리뷰를 기다리는 PR이 {len(waiting)}개라 새 작업을 시작하지 않습니다.")
     graph = build_graph(_model(args.model), REPO, partial(workspace.sandboxed_python, image), base=args.base)
     state = graph.invoke({"issue": args.issue})
 
@@ -55,13 +78,16 @@ def main() -> None:
     for check in state.get("checks", []):
         print(f"[pypo] {check.name}: {'통과' if check.ok else '실패'}")
 
-    if worktree := state.get("worktree"):
-        root = Path(worktree)
-        if state["outcome"] == "passed":
-            print(f"[pypo] 변경 내용:\n{workspace.diff(root)}")
-        if args.keep:
+    root = Path(worktree) if (worktree := state.get("worktree")) else None
+    if root is not None and state["outcome"] == "passed":
+        print(f"[pypo] 변경 내용:\n{workspace.diff(root)}")
+    try:
+        if not args.dry_run:
+            _publish(state, root, args.base)
+    finally:
+        if root is not None and args.keep:
             print(f"[pypo] 작업 공간: {root}")
-        else:
+        elif root is not None:
             workspace.remove(REPO, root)
 
 

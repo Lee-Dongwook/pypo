@@ -6,6 +6,7 @@ pypo는 이 파일을 수정할 수 없다.
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Iterable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -23,6 +24,14 @@ FORBIDDEN = (
 NEW_TEST_PATTERN = "tests/test_*.py"
 MAX_ATTEMPTS = 3
 MAX_DIFF_LINES = 400
+MAX_OPEN_PRS = 3
+BRANCH_PREFIX = "pypo/"
+
+
+def branch_name(number: int, title: str) -> str:
+    """`pypo/<이슈번호>-<slug>`. pypo는 이 이름으로만 푸시한다."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.removeprefix("[pypo]").lower()).strip("-")[:40].strip("-")
+    return f"{BRANCH_PREFIX}{number}-{slug or 'task'}"
 
 
 def _test_functions(source: str) -> set[str]:

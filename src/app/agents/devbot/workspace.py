@@ -13,6 +13,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from .guards import BRANCH_PREFIX
+
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
@@ -206,6 +208,15 @@ def apply(root: Path, edits: dict[str, str]) -> None:
 def diff(root: Path) -> str:
     _git(root, "add", "-A")
     return _git(root, "diff", "--cached")
+
+
+def push(root: Path, branch: str, message: str) -> None:
+    """검증을 통과한 변경을 pypo 이름으로 커밋하고 `pypo/*` 브랜치로 푸시한다. 이미 있는 브랜치는 덮어쓰지 않는다."""
+    if not branch.startswith(BRANCH_PREFIX):
+        raise ValueError(f"{branch}: pypo는 {BRANCH_PREFIX}* 브랜치에만 푸시합니다")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=pypo-agent", "-c", "user.email=pypo-agent@noreply.localhost", "commit", "-qm", message)
+    _git(root, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
 
 
 def missing_tests(root: Path, names: list[str]) -> list[str]:
