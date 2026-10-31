@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from . import github, workspace
-from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations, removed_tests
+from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, diff_line_violations, path_violations, removed_tests
 from .issue import Task, parse_task
 
 logger = logging.getLogger(__name__)
@@ -119,9 +119,12 @@ def build_graph(
         question = _FENCE.sub("", text).strip()
         if not edits and question.startswith("QUESTION:") and len(question.splitlines()) <= 4 and len(question) <= 400:
             return {"outcome": "question", "message": question.removeprefix("QUESTION:").strip()}
-        problems = path_violations({e.path for e in edits}, state["task"].files, root) if edits else [
+
+        edit_paths = {e.path for e in edits}
+        problems = path_violations(edit_paths, state["task"].files, root) if edits else [
             "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음. 설명 없이 첫 줄부터 `=== FILE: <경로> ===`로 시작할 것"
         ]
+
         contents: dict[str, str] = {}
         if not problems:
             workspace.reset(root)
@@ -129,11 +132,17 @@ def build_graph(
                 contents = workspace.apply_edits(root, edits)
             except workspace.EditError as error:
                 problems.append(str(error))
+
         for path, content in contents.items():
-            if (root / path).exists() and (gone := removed_tests((root / path).read_text(encoding="utf-8"), content)):
-                problems.append(f"{path}: 기존 테스트를 지움 ({', '.join(gone)}). 바꿀 부분만 SEARCH/REPLACE로 쓸 것")
+            target_file = root / path
+            if target_file.exists():
+                before_text = target_file.read_text(encoding="utf-8")
+                if gone := removed_tests(before_text, content):
+                    problems.append(f"{path}: 기존 테스트를 지움 ({', '.join(gone)}). 바꿀 부분만 SEARCH/REPLACE로 쓸 것")
+
         if problems:
             return _retry(state, "출력이 규칙을 어겼습니다:\n- " + "\n- ".join(problems))
+
         workspace.apply(root, contents)
         return {"feedback": ""}
 
@@ -144,12 +153,15 @@ def build_graph(
         if failed:
             details = "\n\n".join(f"## {check.name}\n{check.output}" for check in failed)
             return {**_retry(state, f"검증에 실패했습니다.\n\n{details}"), "checks": checks}
-        if (lines := workspace.diff_lines(root)) > MAX_DIFF_LINES:
-            return {**_retry(state, f"변경이 {lines}줄로 상한 {MAX_DIFF_LINES}줄을 넘습니다. 필요한 부분만 바꾸세요."),
-                    "checks": checks}
+
+        diff_text = workspace.get_diff_text(root) if hasattr(workspace, "get_diff_text") else ""
+        if diff_violations := diff_line_violations(diff_text):
+            return {**_retry(state, f"변경 상한 초과:\n" + "\n".join(diff_violations)), "checks": checks}
+            
         if missing := workspace.missing_tests(root, re.findall(r"test_\w+", state["task"].tests)):
             return {**_retry(state, f"이슈가 요구한 테스트가 없습니다: {', '.join(missing)}. 이 이름으로 테스트를 만드세요."),
                     "checks": checks}
+
         return {"outcome": "passed", "checks": checks, "message": f"{state['attempts'] + 1}번째 시도에서 통과"}
 
     def _retry(state: DevbotState, feedback: str) -> DevbotState:
