@@ -488,15 +488,6 @@ def test_journal_entry_reports_result_and_calls() -> None:
     assert "mistakes.md" in entry
 
 
-def test_ruff_check_fixes_unused_imports_instead_of_failing(tmp_path: Path) -> None:
-    (tmp_path / "calc.py").write_text("import os\n\n\ndef add(a, b):\n    return a + b\n", encoding="utf-8")
-
-    ruff = workspace.run_checks(tmp_path, [sys.executable])[0]
-
-    assert ruff.ok, ruff.output
-    assert "import os" not in (tmp_path / "calc.py").read_text(encoding="utf-8")
-
-
 def test_retries_sample_with_higher_temperature_but_first_try_stays_deterministic() -> None:
     model = ChatOllama(model="qwen2.5-coder:7b", temperature=0, num_ctx=12288)
 
@@ -525,3 +516,27 @@ def test_only_passing_work_is_saved_as_training_data(tmp_path: Path, trajectorie
     assert [m["role"] for m in rows[0]["messages"]] == ["user", "assistant"]
     assert "# 이전 출력\n\n형식 없는 답" in rows[0]["messages"][0]["content"]
     assert rows[0]["messages"][1]["content"] == FIXED
+
+
+def test_training_data_drops_code_fences_and_flags_answers_ruff_had_to_fix(tmp_path: Path, trajectories: Path) -> None:
+    fenced = FIXED.replace("<<<<<<< SEARCH", "```python\n<<<<<<< SEARCH").replace("REPLACE\n", "REPLACE\n```\n")
+    unused_import = """=== FILE: calc.py ===
+<<<<<<< SEARCH
+def add(a, b):
+    return a - b
+=======
+import json
+
+
+def add(a, b):
+    return a + b
+>>>>>>> REPLACE
+=== END ==="""
+
+    run(make_repo(tmp_path / "fenced"), [fenced])
+    run(make_repo(tmp_path / "unused"), [unused_import])
+
+    rows = [json.loads(line) for line in trajectories.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    assert "```" not in rows[0]["messages"][1]["content"]
+    assert [row["ruff_fixed"] for row in rows] == [False, True]

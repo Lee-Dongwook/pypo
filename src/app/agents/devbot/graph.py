@@ -44,6 +44,7 @@ class DevbotState(TypedDict, total=False):
     feedback: str
     reply: str
     prompt: str
+    ruff_fixed: bool
     checks: list[workspace.Check]
     outcome: Outcome
     message: str
@@ -67,12 +68,17 @@ LOG_DIR = Path(tempfile.gettempdir()) / "pypo-logs"
 TRAJECTORIES = Path.home() / ".pypo" / "trajectories.jsonl"
 
 
-def save_trajectory(number: int, attempts: int, prompt: str, reply: str) -> None:
-    """검증을 통과한 (프롬프트, 응답) 한 쌍을 JSONL로 덧붙인다. `messages`는 OpenAI·MLX-LM의 chat 학습 형식이다."""
+def save_trajectory(number: int, attempts: int, prompt: str, reply: str, ruff_fixed: bool) -> None:
+    """검증을 통과한 (프롬프트, 응답) 한 쌍을 JSONL로 덧붙인다. `messages`는 OpenAI·MLX-LM의 chat 학습 형식이다.
+
+    하네스가 대신 고친 습관을 정답으로 배우지 않게 한다. 코드 펜스는 벗기고, ruff가 고친 답은 `ruff_fixed`로 표시해
+    학습할 때 거르거나 손보게 한다.
+    """
     row = {
         "issue": number,
         "attempts": attempts,
-        "messages": [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}],
+        "ruff_fixed": ruff_fixed,
+        "messages": [{"role": "user", "content": prompt}, {"role": "assistant", "content": _FENCE.sub("", reply)}],
     }
     TRAJECTORIES.parent.mkdir(parents=True, exist_ok=True)
     with TRAJECTORIES.open("a", encoding="utf-8") as file:
@@ -186,7 +192,8 @@ def build_graph(
             return _retry(state, "출력이 규칙을 어겼습니다:\n- " + "\n- ".join(problems))
 
         workspace.apply(root, contents)
-        return {"feedback": "", "reply": text, "prompt": prompt}
+        ruff_fixed = any((root / path).read_text(encoding="utf-8") != content for path, content in contents.items())
+        return {"feedback": "", "reply": text, "prompt": prompt, "ruff_fixed": ruff_fixed}
 
     def verify(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
@@ -202,7 +209,9 @@ def build_graph(
             return {**_retry(state, f"이슈가 요구한 테스트가 없습니다: {', '.join(missing)}. 이 이름으로 테스트를 만드세요."),
                     "checks": checks}
 
-        save_trajectory(state["task"].number, state["attempts"] + 1, state["prompt"], state["reply"])
+        save_trajectory(
+            state["task"].number, state["attempts"] + 1, state["prompt"], state["reply"], state["ruff_fixed"]
+        )
         return {"outcome": "passed", "checks": checks, "message": f"{state['attempts'] + 1}번째 시도에서 통과"}
 
     def retrospect(state: DevbotState) -> DevbotState:
