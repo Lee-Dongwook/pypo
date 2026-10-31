@@ -10,7 +10,7 @@ from src.app.card.calculator import (
     evaluate_card,
     evaluate_single_purchase,
     plan_allocation,
-    rank_purchase_evaluations,
+    rank_purchases,
 )
 from src.app.card.schemas import Card, Tier
 
@@ -216,7 +216,7 @@ def test_ranking_puts_uncomputable_cards_last() -> None:
         evaluate_single_purchase(make_rate_card("high"), 300_000, "cafe", 50_000, remaining_cap=10_000),
     ]
 
-    ranked = [e.card_id for e in rank_purchase_evaluations(evaluations)]
+    ranked = [e.card_id for e in rank_purchases(evaluations)]
 
     assert ranked == ["high", "low", "none", "flat"]
 
@@ -268,3 +268,7 @@ def test_purchase_evaluation_lives_in_schemas_and_api_imports_it_from_there() ->
     assert "class PurchaseEvaluation" not in inspect.getsource(calculator)
     assert "pydantic" not in from_imports(calculator)
     assert "PurchaseEvaluation" in from_imports(api).get("schemas", set())
+
+
+def test_ranking_has_one_public_name() -> None:
+    assert not hasattr(calculator, "rank_purchase_evaluations")
