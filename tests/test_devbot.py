@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from src.app.agents.devbot import workspace
 from src.app.agents.devbot.graph import build_graph
-from src.app.agents.devbot.guards import MAX_ATTEMPTS, path_violations, removed_tests
+from src.app.agents.devbot.guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations, removed_tests
 from src.app.agents.devbot.issue import parse_task
 
 REPO = Path(__file__).resolve().parents[1]
@@ -131,10 +132,16 @@ def make_repo(path: Path) -> Path:
     return path
 
 
+def local_python(root: Path) -> list[str]:
+    """테스트에서는 Docker 없이 지금 Python으로 검증한다. 샌드박스 자체는 따로 확인한다."""
+    return [sys.executable]
+
+
 def run(repo: Path, responses: list[str]) -> dict:
     graph = build_graph(
         FakeListChatModel(responses=responses),
         repo,
+        local_python,
         base="HEAD",
         issues=lambda number: [{"number": 1, "title": "add 고치기", "body": BODY}],
     )
@@ -175,6 +182,7 @@ def test_new():
     graph = build_graph(
         FakeListChatModel(responses=[wipe, FIXED]),
         repo,
+        local_python,
         base="HEAD",
         issues=lambda number: [{"number": 1, "title": "t", "body": body}],
     )
@@ -221,6 +229,7 @@ def test_tests_named_in_the_issue_must_exist(tmp_path: Path) -> None:
     graph = build_graph(
         FakeListChatModel(responses=[FIXED, added]),
         repo,
+        local_python,
         base="HEAD",
         issues=lambda number: [{"number": 1, "title": "t", "body": body}],
     )
@@ -295,3 +304,34 @@ def test_trailing_whitespace_written_by_the_model_is_removed() -> None:
     [edit] = workspace.parse_edits(reply)
 
     assert edit.replace == "def f():\n    x = 1\n\n    return x\n"
+
+
+def test_change_over_the_line_limit_is_retried(tmp_path: Path) -> None:
+    filler = "".join(f"x{i} = {i}\n" for i in range(MAX_DIFF_LINES + 1))
+    huge = FIXED.replace("    return a + b\n", "    return a + b\n\n\n" + filler)
+
+    state = run(make_repo(tmp_path / "repo"), [huge, FIXED])
+
+    assert state["outcome"] == "passed"
+    assert "상한" in state["history"][0]
+
+
+def test_broken_syntax_is_left_to_pytest_not_reported_as_deleted_tests() -> None:
+    assert removed_tests("def test_a():\n    pass\n", "def test_a(:\n") == []
+
+
+@pytest.mark.skipif(subprocess.run(["docker", "info"], capture_output=True).returncode != 0, reason="Docker 없음")
+def test_sandbox_has_no_network_and_sees_only_the_worktree(tmp_path: Path) -> None:
+    python = workspace.sandboxed_python(workspace.sandbox_image(REPO), tmp_path)
+    probe = (
+        "import os, socket\n"
+        "assert not os.path.exists(os.path.expanduser('~/.ssh'))\n"
+        f"assert not os.path.exists({str(REPO / 'pyproject.toml')!r})\n"
+        "socket.create_connection(('1.1.1.1', 53), timeout=3)\n"
+    )
+
+    result = subprocess.run([*python, "-c", probe], capture_output=True, text=True)
+
+    assert result.returncode != 0
+    assert "OSError" in result.stderr or "unreachable" in result.stderr
+    assert "AssertionError" not in result.stderr

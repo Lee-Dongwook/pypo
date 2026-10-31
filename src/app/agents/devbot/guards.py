@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Iterable
 from fnmatch import fnmatch
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 FORBIDDEN = (
     "migrations/",
@@ -24,70 +24,64 @@ NEW_TEST_PATTERN = "tests/test_*.py"
 MAX_ATTEMPTS = 3
 MAX_DIFF_LINES = 400
 
-def extract_test_functions(code_content: str) -> set[str]:
-    """AST를 사용하여 최상위 및 클래스 내 테스트 함수 정확히 추출"""
-    try:
-        tree = ast.parse(code_content)
-    except SyntaxError:
-        return set()
-    
-    test_funcs = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-            test_funcs.add(node.name)
-    return test_funcs
+
+def _test_functions(source: str) -> set[str]:
+    """클래스 안 메서드까지 포함한 `test_` 함수 이름. 문법 오류면 `SyntaxError`."""
+    return {
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test_")
+    }
+
 
 def removed_tests(before: str, after: str) -> list[str]:
-    """수정 후 사라진 테스트 함수. 테스트를 지우면 pytest는 실패하지 않으므로 따로 막는다."""
-    before_tests = extract_test_functions(before)
-    after_tests = extract_test_functions(after)
-    return sorted(before_tests - after_tests)
+    """수정 후 사라진 테스트 함수. 테스트를 지우면 pytest는 실패하지 않으므로 따로 막는다.
 
-
-def normalize_and_validate_path(raw_path: str, root: Path) -> Path | None:
+    수정 후 코드가 문법 오류면 판단하지 않는다. pytest가 오류를 그대로 보여 주는 편이 모델에게 낫다.
+    """
     try:
-        cleaned = raw_path.strip().strip("`").removeprefix("./")
-        resolved = (root / cleaned).resolve()
+        return sorted(_test_functions(before) - _test_functions(after))
+    except SyntaxError:
+        return []
 
-        if not resolved.is_relative_to(root.resolve()):
-            return None
-        return resolved
-    except (ValueError, RuntimeError):
-        return None
+
+def normalize(path: str) -> str:
+    return path.strip().strip("`").removeprefix("./")
+
+
+def _resolve(raw: str, root: Path) -> Path | None:
+    """저장소 안의 실제 경로. `..`, 절대 경로, 밖을 가리키는 심볼릭 링크는 None."""
+    resolved = (root / normalize(raw)).resolve()
+    return resolved if resolved.is_relative_to(root.resolve()) else None
 
 
 def path_violations(paths: Iterable[str], targets: Iterable[str], root: Path) -> list[str]:
-    """수정하려는 경로 중 허용되지 않는 것과 그 이유 검증."""
-    allowed = {normalize_and_validate_path(t, root) for t in targets}
-    allowed = {p for p in allowed if p is not None}
+    """수정하려는 경로 중 허용되지 않는 것과 그 이유. 비어 있으면 통과.
 
+    허용: 이슈에 지정된 파일, 아직 없는 `tests/test_*.py` 새 파일.
+    """
+    allowed = {_resolve(target, root) for target in targets} - {None}
     problems: list[str] = []
     for raw in paths:
-        resolved_path = normalize_and_validate_path(raw, root)
-        if resolved_path is None:
-            problems.append(f"{raw}: 저장소 밖 경로 또는 잘못된 경로")
+        resolved = _resolve(raw, root)
+        if resolved is None or resolved == root.resolve():
+            problems.append(f"{raw}: 저장소 밖 경로")
             continue
-        
-        rel_path = resolved_path.relative_to(root.resolve()).as_posix()
-
-        if any(rel_path == rule or rel_path.startswith(rule) for rule in FORBIDDEN):
-            problems.append(f"{rel_path}: 수정 금지 경로")
-        elif resolved_path not in allowed and not (fnmatch(rel_path, NEW_TEST_PATTERN) and not resolved_path.exists()):
-            problems.append(f"{rel_path}: 이슈에 지정되지 않은 파일")
-
+        path = resolved.relative_to(root.resolve()).as_posix()
+        if any(path == rule or path.startswith(rule) for rule in FORBIDDEN):
+            problems.append(f"{path}: 수정 금지 경로")
+        elif resolved not in allowed and not (fnmatch(path, NEW_TEST_PATTERN) and not resolved.exists()):
+            problems.append(f"{path}: 이슈에 지정되지 않은 파일")
     return problems
 
+
 def diff_line_violations(diff_text: str) -> list[str]:
-    """변경 사항의 총 라인 수가 MAX_DIFF_LINES를 초과하는지 검사."""
-    added_lines = 0
-    deleted_lines = 0
-    for line in diff_text.splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
-            added_lines += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            deleted_lines += 1
-            
-    total_changed = added_lines + deleted_lines
-    if total_changed > MAX_DIFF_LINES:
-        return [f"변경 밀도 초과: 총 {total_changed}줄 변경됨 (허용 최대: {MAX_DIFF_LINES}줄)"]
+    """`git diff`의 추가·삭제 줄 수가 상한을 넘으면 그 이유."""
+    changed = sum(
+        1
+        for line in diff_text.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+    if changed > MAX_DIFF_LINES:
+        return [f"변경이 {changed}줄로 상한 {MAX_DIFF_LINES}줄을 넘습니다. 필요한 부분만 바꾸세요."]
     return []
