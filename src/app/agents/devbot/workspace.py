@@ -224,10 +224,23 @@ def run_checks(root: Path) -> list[Check]:
     """ruff와 pytest. 의존성을 다시 설치하지 않도록 지금 실행 중인 가상환경을 쓴다."""
     # ponytail: 웹(apps/, packages/)을 건드리는 이슈는 worktree에 node_modules가 없어 typecheck를 못 돌린다. M2 전에 해결.
     checks = []
-    for name, args in [
-        ("ruff", [sys.executable, "-m", "ruff", "check", "."]),
-        ("pytest", [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]),
-    ]:
-        result = _run(args, root)
-        checks.append(Check(name, result.returncode == 0, (result.stdout + result.stderr)[-_OUTPUT_TAIL:]))
+
+    container_name = f"pypo-sandbox-{root.name}"
+    docker_args = [
+        "docker", "run", "--rm",
+        "--name", container_name,
+        "-v", f"{root.resolve()}:/workspace",
+        "-w", "/workspace",
+        "--network", "none",  # 외부망 통신 원천 차단 (Egress Filtering)
+        "--memory", "512m",   # 메모리 락/폭주 방지
+        "python:3.13-slim",   # 프로젝트 파이썬 버전 맞춤
+        "sh", "-c", "pip install -q ruff pytest && ruff check . && pytest -q -p no:cacheprovider"
+    ]
+
+    result = subprocess.run(docker_args, capture_output=True, text=True, timeout=60)
+    
+    output = (result.stdout + result.stderr)[-_OUTPUT_TAIL:]
+    ok = result.returncode == 0
+
+    checks.append(Check("sandbox-checks", ok, output))
     return checks
