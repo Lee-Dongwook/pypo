@@ -26,7 +26,8 @@ REPO = Path(__file__).resolve().parents[4]
 
 def _model(reference: str):
     # Ollama 기본 문맥(4k)은 짧고, 16k는 16GB Mac에서 스왑을 일으킨다. 참고 파일을 발췌해 12k 안에 맞춘다. 넘치면 Ollama가 앞부분을 조용히 잘라 버린다.
-    extra = {"num_ctx": 12288} if reference.startswith("ollama") else {}
+    # num_predict: 반복에 빠져도 시간을 무한정 쓰지 않게 막는다. 지금까지 가장 긴 답은 수백 토큰이다.
+    extra = {"num_ctx": 12288, "num_predict": 2048} if reference.startswith("ollama") else {}
     return resolve_chat_model(reference, **extra)
 
 

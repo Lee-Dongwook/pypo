@@ -495,3 +495,11 @@ def test_retries_sample_with_higher_temperature_but_first_try_stays_deterministi
     assert retry.temperature == RETRY_TEMPERATURE
     assert retry.num_ctx == 12288
     assert model.temperature == 0
+
+
+def test_retry_prompt_shows_the_previous_reply_so_only_the_problem_is_fixed(tmp_path: Path) -> None:
+    run(make_repo(tmp_path / "repo"), ["형식 없는 답", FIXED])
+
+    prompt = (LOG_DIR / "issue1-try2.prompt.md").read_text(encoding="utf-8")
+    assert "# 이전 출력\n\n형식 없는 답" in prompt
+    assert "위 문제만 고쳐" in prompt
