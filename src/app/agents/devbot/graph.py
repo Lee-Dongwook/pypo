@@ -111,7 +111,9 @@ def build_graph(
                 "title": task.title,
                 "body": task.body,
                 "references": workspace.reference_snippets(root, task.files, task.body) or "(없음)",
-                "files": "\n\n".join(f"--- {p} ---\n{workspace.read(root, p)}" for p in task.files),
+                "files": "\n\n".join(
+                    f"--- {p} ---\n{workspace.file_content(root, p, task.body)}" for p in task.files
+                ),
                 "memory": memory.read(root),
             }
             return {"task": task, "worktree": str(root), "context": context, "attempts": 0, "feedback": ""}
