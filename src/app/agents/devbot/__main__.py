@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from functools import partial
 from pathlib import Path
 
 from src.app.engine.models import resolve_chat_model
@@ -39,7 +40,11 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     print(f"[pypo] model={args.model} base={args.base}")
-    graph = build_graph(_model(args.model), REPO, base=args.base)
+    try:
+        image = workspace.sandbox_image(REPO)
+    except RuntimeError as error:
+        raise SystemExit(f"[pypo] {error}") from error
+    graph = build_graph(_model(args.model), REPO, partial(workspace.sandboxed_python, image), base=args.base)
     state = graph.invoke({"issue": args.issue})
 
     task = state.get("task")

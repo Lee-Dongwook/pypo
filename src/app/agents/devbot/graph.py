@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from . import github, workspace
-from .guards import MAX_ATTEMPTS, MAX_DIFF_LINES, diff_line_violations, path_violations, removed_tests
+from .guards import MAX_ATTEMPTS, diff_line_violations, path_violations, removed_tests
 from .issue import Task, parse_task
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ _FENCE = re.compile(r"^```[\w-]*\n|\n?```\s*$", re.M)
 
 Outcome = Literal["passed", "question", "failed", "no_task"]
 IssueSource = Callable[[int | None], list[dict[str, Any]]]
+PythonCommand = Callable[[Path], list[str]]
 
 
 class DevbotState(TypedDict, total=False):
@@ -81,10 +82,14 @@ def _ask(model: BaseChatModel, prompt: str, step: str) -> str:
 def build_graph(
     model: BaseChatModel,
     repo: Path,
+    python: PythonCommand,
     base: str = "origin/main",
     issues: IssueSource = github.candidate_issues,
 ) -> CompiledStateGraph:
-    """`repo`는 pypo 자신의 규칙과 프롬프트를 읽는 곳, `base`는 작업을 시작할 커밋이다."""
+    """`repo`는 pypo 자신의 규칙과 프롬프트를 읽는 곳, `base`는 작업을 시작할 커밋이다.
+
+    `python`은 worktree에서 검증(ruff, pytest)을 돌릴 Python 명령을 만든다. 실제 실행에서는 샌드박스다.
+    """
 
     def pick(state: DevbotState) -> DevbotState:
         skipped = []
@@ -148,16 +153,14 @@ def build_graph(
 
     def verify(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
-        checks = workspace.run_checks(root)
+        checks = workspace.run_checks(root, python(root))
         failed = [check for check in checks if not check.ok]
         if failed:
             details = "\n\n".join(f"## {check.name}\n{check.output}" for check in failed)
             return {**_retry(state, f"검증에 실패했습니다.\n\n{details}"), "checks": checks}
 
-        diff_text = workspace.get_diff_text(root) if hasattr(workspace, "get_diff_text") else ""
-        if diff_violations := diff_line_violations(diff_text):
-            return {**_retry(state, f"변경 상한 초과:\n" + "\n".join(diff_violations)), "checks": checks}
-            
+        if too_big := diff_line_violations(workspace.diff(root)):
+            return {**_retry(state, "\n".join(too_big)), "checks": checks}
         if missing := workspace.missing_tests(root, re.findall(r"test_\w+", state["task"].tests)):
             return {**_retry(state, f"이슈가 요구한 테스트가 없습니다: {', '.join(missing)}. 이 이름으로 테스트를 만드세요."),
                     "checks": checks}

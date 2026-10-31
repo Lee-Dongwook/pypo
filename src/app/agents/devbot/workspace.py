@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -200,15 +203,6 @@ def apply(root: Path, edits: dict[str, str]) -> None:
         _run([sys.executable, "-m", "ruff", "check", "--fix", "--quiet", *python], root)
 
 
-def diff_lines(root: Path) -> int:
-    _git(root, "add", "-A")
-    total = 0
-    for line in _git(root, "diff", "--cached", "--numstat").splitlines():
-        added, removed, _ = line.split("\t", 2)
-        total += int(added) + int(removed) if added != "-" else 0
-    return total
-
-
 def diff(root: Path) -> str:
     _git(root, "add", "-A")
     return _git(root, "diff", "--cached")
@@ -220,27 +214,62 @@ def missing_tests(root: Path, names: list[str]) -> list[str]:
     return [name for name in names if not re.search(rf"^(?:async )?def {name}\b", source, re.M)]
 
 
-def run_checks(root: Path) -> list[Check]:
-    """ruff와 pytest. 의존성을 다시 설치하지 않도록 지금 실행 중인 가상환경을 쓴다."""
-    # ponytail: 웹(apps/, packages/)을 건드리는 이슈는 worktree에 node_modules가 없어 typecheck를 못 돌린다. M2 전에 해결.
-    checks = []
+# 검증용 이미지. torch는 코드 어디서도 쓰지 않는데 리눅스에서는 CUDA 패키지(수 GB)를 끌고 와서 뺀다.
+_SANDBOX_DOCKERFILE = """\
+FROM ghcr.io/astral-sh/uv:0.12.23-python3.13-trixie-slim
+ENV UV_PROJECT_ENVIRONMENT=/venv UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+WORKDIR /deps
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project $(grep -oE '^name = "(torch|triton|nvidia-[^"]*|cuda-[^"]*)"' uv.lock \
+    | cut -d'"' -f2 | sed 's/^/--no-install-package /')
+"""
+_CHECK_TIMEOUT_SECONDS = 300
 
-    container_name = f"pypo-sandbox-{root.name}"
-    docker_args = [
+
+def sandbox_image(repo: Path) -> str:
+    """의존성을 미리 깐 검증용 이미지 태그. `uv.lock`이 바뀔 때만 새로 빌드한다. Docker가 없으면 `RuntimeError`."""
+    lock = (repo / "uv.lock").read_bytes()
+    tag = f"pypo-sandbox:{hashlib.sha256(lock + _SANDBOX_DOCKERFILE.encode()).hexdigest()[:12]}"
+    if _run(["docker", "info"], repo).returncode != 0:
+        raise RuntimeError("Docker가 실행 중이 아닙니다. 검증은 샌드박스에서만 돌립니다.")
+    if _run(["docker", "image", "inspect", tag], repo).returncode == 0:
+        return tag
+    with tempfile.TemporaryDirectory() as context:
+        for name in ("pyproject.toml", "uv.lock"):
+            shutil.copy(repo / name, context)
+        (Path(context) / "Dockerfile").write_text(_SANDBOX_DOCKERFILE, encoding="utf-8")
+        result = _run(["docker", "build", "-q", "-t", tag, context], repo)
+    if result.returncode != 0:
+        raise RuntimeError(f"샌드박스 이미지를 만들지 못했습니다.\n{result.stderr[-_OUTPUT_TAIL:]}")
+    return tag
+
+
+def sandboxed_python(image: str, root: Path) -> list[str]:
+    """worktree만 보이고 네트워크가 없는 컨테이너에서 Python을 실행하는 명령.
+
+    모델이 쓴 테스트는 pytest가 그대로 실행한다. 홈 디렉터리의 토큰이나 `.env`를 읽거나 밖으로 보내지 못하게 막는다.
+    """
+    return [
         "docker", "run", "--rm",
-        "--name", container_name,
-        "-v", f"{root.resolve()}:/workspace",
-        "-w", "/workspace",
-        "--network", "none",  # 외부망 통신 원천 차단 (Egress Filtering)
-        "--memory", "512m",   # 메모리 락/폭주 방지
-        "python:3.13-slim",   # 프로젝트 파이썬 버전 맞춤
-        "sh", "-c", "pip install -q ruff pytest && ruff check . && pytest -q -p no:cacheprovider"
+        "--network", "none",
+        "--memory", "2g", "--cpus", "2", "--pids-limit", "256",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+        "-v", f"{root.resolve()}:/workspace", "-w", "/workspace",
+        image,
+        # 컨테이너 안에서 시간을 재야 멈춘 테스트가 컨테이너째 끝난다.
+        "timeout", str(_CHECK_TIMEOUT_SECONDS), "/venv/bin/python",
     ]
 
-    result = subprocess.run(docker_args, capture_output=True, text=True, timeout=60)
-    
-    output = (result.stdout + result.stderr)[-_OUTPUT_TAIL:]
-    ok = result.returncode == 0
 
-    checks.append(Check("sandbox-checks", ok, output))
+def run_checks(root: Path, python: list[str]) -> list[Check]:
+    """ruff와 pytest. `python`은 Python을 실행하는 명령이다 (보통 `sandboxed_python`)."""
+    # ponytail: 웹(apps/, packages/)을 건드리는 이슈는 worktree에 node_modules가 없어 typecheck를 못 돌린다. M2 전에 해결.
+    checks = []
+    for name, args in [
+        ("ruff", ["-m", "ruff", "check", "."]),
+        ("pytest", ["-m", "pytest", "-q", "-p", "no:cacheprovider"]),
+    ]:
+        result = _run([*python, *args], root)
+        checks.append(Check(name, result.returncode == 0, (result.stdout + result.stderr)[-_OUTPUT_TAIL:]))
     return checks
