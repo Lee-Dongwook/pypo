@@ -263,7 +263,7 @@ def evaluate_single_purchase(
         )
 
     theoretical = int(Decimal(amount) * tier.discount_rate)
-    cap = None if tier.discount_cap is None else min(remaining_cap, tier.discount_cap)
+    cap = None if tier.discount_cap is None else max(remaining_cap, tier.discount_cap)
     return PurchaseEvaluation(
         **base,
         status="eligible",
