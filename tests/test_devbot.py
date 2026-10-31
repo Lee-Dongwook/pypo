@@ -595,3 +595,21 @@ def test_rewriting_existing_definitions_is_rejected_with_a_move_hint(tmp_path: P
     assert len(problems) == 1
     assert "Box" in problems[0] and "MOVE" in problems[0]
     assert "New" not in problems[0]
+
+
+def test_delete_plus_retyped_copy_elsewhere_moves_the_original_instead(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text("class Box:\n    width: int\n", encoding="utf-8")
+    (tmp_path / "lib" / "models.py").write_text("class Circle:\n    r: int\n", encoding="utf-8")
+    reply = (
+        "=== FILE: lib/shapes.py ===\nDELETE Box\n=== END ===\n"
+        "=== FILE: lib/models.py ===\nfrom .shapes import Circle\n\nclass Box:\n    width: int\n"
+        "    invented: str = 'made up'\n=== END ==="
+    )
+
+    contents = workspace.apply_edits(tmp_path, workspace.parse_edits(reply))
+
+    assert contents["lib/models.py"].endswith("class Box:\n    width: int\n")
+    assert "invented" not in contents["lib/models.py"]
+    assert "from .shapes" not in contents["lib/models.py"]
+    assert contents["lib/shapes.py"].startswith("from .models import Box\n")

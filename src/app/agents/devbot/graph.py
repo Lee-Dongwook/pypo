@@ -174,11 +174,11 @@ def build_graph(
         ]
 
         if not problems:
+            workspace.reset(root)  # 이전 시도의 수정이 남은 파일과 비교하지 않도록 먼저 원본으로 되돌린다.
             problems = workspace.rewritten_definitions(root, edits)
 
         contents: dict[str, str] = {}
         if not problems:
-            workspace.reset(root)
             try:
                 contents = workspace.apply_edits(root, edits)
             except workspace.EditError as error:

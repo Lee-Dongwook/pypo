@@ -175,7 +175,36 @@ def parse_edits(text: str) -> list[Edit]:
             edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):
             edits.append(Edit(path, "", _strip_trailing(code) + "\n"))
-    return edits
+    return _deletes_retyped_elsewhere_are_moves(edits)
+
+
+def _deletes_retyped_elsewhere_are_moves(edits: list[Edit]) -> list[Edit]:
+    """한 파일에서 DELETE하고 다른 파일에 같은 이름을 다시 쳐 붙이면 옮기기로 본다.
+
+    7B 모델은 옮기기를 늘 이렇게 하고, 다시 친 코드에 없던 검증을 지어 넣기도 한다 (#3).
+    그래서 다시 친 정의는 버리고 원본을 MOVE로 옮긴다. 다시 친 블록에 함께 쓴 import도 버린다 (순환 import를 만들곤 한다).
+    """
+    deleted = {edit.delete: edit.path for edit in edits if edit.delete and not edit.move_to}
+    targets: dict[str, str] = {}
+    result: list[Edit] = []
+    for edit in edits:
+        if edit.search or edit.delete:
+            result.append(edit)
+            continue
+        retyped = {name for name in _top_level_names(edit.replace) if deleted.get(name, edit.path) != edit.path}
+        if not retyped:
+            result.append(edit)
+            continue
+        targets.update(dict.fromkeys(retyped, edit.path))
+        rest = edit.replace
+        for name in retyped:
+            rest = _cut(rest, Edit(edit.path, "", "", name))[0]
+        if _top_level_names(rest) or any(
+            not isinstance(node, ast.Import | ast.ImportFrom) for node in ast.parse(rest).body
+        ):
+            result.append(Edit(edit.path, "", rest))
+    return [Edit(e.path, "", "", e.delete, targets[e.delete]) if e.delete in targets and not e.move_to else e
+            for e in result]
 
 
 def _strip_trailing(code: str) -> str:
