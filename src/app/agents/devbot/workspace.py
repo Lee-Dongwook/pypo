@@ -16,6 +16,7 @@ from pathlib import Path
 from .guards import BRANCH_PREFIX
 
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
+_DELETE_LINE = re.compile(r"^DELETE (\w+)[ \t]*\n?", re.M)
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
 MAX_FILE_CHARS = 8000
@@ -139,11 +140,15 @@ def reference_snippets(root: Path, targets: tuple[str, ...], hint: str) -> str:
 
 @dataclass(frozen=True)
 class Edit:
-    """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다)."""
+    """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다).
+
+    `delete`가 있으면 그 이름의 최상위 함수·클래스를 통째로 지운다.
+    """
 
     path: str
     search: str
     replace: str
+    delete: str = ""
 
 
 class EditError(ValueError):
@@ -154,10 +159,13 @@ def parse_edits(text: str) -> list[Edit]:
     """모델 출력에서 `=== FILE ===` 블록을 꺼낸다. 블록 밖 글은 무시한다.
 
     SEARCH/REPLACE 표시가 있으면 찾아 바꾸기, 없으면 블록 안 코드 전체를 덧붙이기(새 파일이면 만들기)로 본다.
+    `DELETE 이름` 줄은 정의 지우기다. 7B 모델은 큰 정의를 SEARCH에 그대로 베끼지 못해서, 지우기는 이름만 받는다.
     7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다. 모델이 쓴 줄 끝 공백은 지운다.
     """
     edits: list[Edit] = []
     for path, body in _FILE_BLOCK.findall(text):
+        edits += [Edit(path, "", "", name) for name in _DELETE_LINE.findall(body)]
+        body = _DELETE_LINE.sub("", body)
         if blocks := _EDIT_BLOCK.findall(body):
             edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):
@@ -196,7 +204,24 @@ def _append(text: str, addition: str) -> str:
     return text.rstrip("\n") + ("\n\n\n" + body if body.strip() else "\n")
 
 
+def _delete(text: str, edit: Edit) -> str:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as error:
+        raise EditError(f"{edit.path}: 문법 오류가 있어 {edit.delete}를 지울 수 없음 ({error.msg})") from error
+    kinds = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    nodes = [node for node in tree.body if isinstance(node, kinds) and node.name == edit.delete]
+    if len(nodes) != 1:
+        raise EditError(f"{edit.path}: 지울 최상위 함수·클래스 {edit.delete}가 {len(nodes)}개 있음. 정확한 이름을 쓸 것")
+    node = nodes[0]
+    start = min([node.lineno, *(d.lineno for d in node.decorator_list)]) - 1
+    lines = text.splitlines(keepends=True)
+    return re.sub(r"\n{4,}", "\n\n\n", "".join(lines[:start] + lines[node.end_lineno :]))
+
+
 def _replace_once(text: str, edit: Edit) -> str:
+    if edit.delete:
+        return _delete(text, edit)
     if not edit.search.strip():
         return _append(text, edit.replace)
     if (count := text.count(edit.search)) == 1:

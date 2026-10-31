@@ -546,3 +546,26 @@ def add(a, b):
     assert len(rows) == 2
     assert "```" not in rows[0]["messages"][1]["content"]
     assert [row["ruff_fixed"] for row in rows] == [False, True]
+
+
+def test_delete_line_removes_a_whole_definition_so_the_model_need_not_copy_it(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text(
+        "import functools\n\n\n@functools.cache\nclass Box:\n    width: int\n\n\ndef area(w, h):\n    return w * h\n",
+        encoding="utf-8",
+    )
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nDELETE Box\nfrom models import Box\n=== END ===")
+
+    content = workspace.apply_edits(tmp_path, edits)["shapes.py"]
+
+    assert "class Box" not in content
+    assert "@functools.cache" not in content
+    assert "from models import Box" in content
+    assert "def area(w, h):" in content
+
+
+def test_deleting_an_unknown_definition_is_reported_with_its_name(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text("def area(w, h):\n    return w * h\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nDELETE Box\n=== END ===")
+
+    with pytest.raises(workspace.EditError, match="Box"):
+        workspace.apply_edits(tmp_path, edits)
