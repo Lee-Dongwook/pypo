@@ -584,3 +584,14 @@ def test_move_line_cuts_a_definition_into_another_file_and_leaves_an_import(tmp_
     assert "class Box" not in contents["lib/shapes.py"]
     assert contents["lib/shapes.py"].startswith("from .models import Box\n")
     assert contents["lib/models.py"].endswith("class Circle:\n    r: int\n\n\nclass Box:\n    width: int\n")
+
+
+def test_rewriting_existing_definitions_is_rejected_with_a_move_hint(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text("class Box:\n    width: int\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nclass Box:\n    width: int\n\n\nclass New:\n    pass\n=== END ===")
+
+    problems = workspace.rewritten_definitions(tmp_path, edits)
+
+    assert len(problems) == 1
+    assert "Box" in problems[0] and "MOVE" in problems[0]
+    assert "New" not in problems[0]

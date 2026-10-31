@@ -173,6 +173,9 @@ def build_graph(
             "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음. 설명 없이 첫 줄부터 `=== FILE: <경로> ===`로 시작할 것"
         ]
 
+        if not problems:
+            problems = workspace.rewritten_definitions(root, edits)
+
         contents: dict[str, str] = {}
         if not problems:
             workspace.reset(root)

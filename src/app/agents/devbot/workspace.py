@@ -258,6 +258,29 @@ def _replace_once(text: str, edit: Edit) -> str:
     return "".join(lines[:i]) + edit.replace + "".join(lines[i + len(wanted) :])
 
 
+def _top_level_names(code: str) -> set[str]:
+    try:
+        body = ast.parse(code).body
+    except SyntaxError:
+        return set()
+    return {node.name for node in body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)}
+
+
+def rewritten_definitions(root: Path, edits: list[Edit]) -> list[str]:
+    """덧붙이기 블록이 파일에 이미 있는 함수·클래스를 다시 쓴 경우. 7B는 옮기기를 파일 통째로 다시 쓰기로 착각한다."""
+    problems = []
+    for edit in edits:
+        file = root / edit.path
+        if edit.search or edit.delete or not file.exists():
+            continue
+        if again := sorted(_top_level_names(edit.replace) & _top_level_names(file.read_text(encoding="utf-8"))):
+            problems.append(
+                f"{edit.path}: 이미 있는 {', '.join(again)}를 다시 씀. 덧붙이기에는 새 코드만 쓴다. "
+                "정의를 다른 파일로 옮길 때는 원래 파일 블록에 `MOVE 이름 TO <새 경로>` 한 줄만 쓴다"
+            )
+    return problems
+
+
 def apply_edits(root: Path, edits: list[Edit]) -> dict[str, str]:
     """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`."""
     contents: dict[str, str] = {}
