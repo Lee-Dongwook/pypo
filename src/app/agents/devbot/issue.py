@@ -36,6 +36,9 @@ class Task:
         problems = [name for name, value in [("목표", self.goal), ("완료 기준", self.done)] if not value]
         if not self.out_of_scope:
             problems.append("하지 않을 것")
+        # 테스트 이름이 없으면 검증이 ruff·pytest뿐이라, 아무것도 안 한 답도 통과한다 (#3).
+        if not re.search(r"\btest_\w+", self.tests):
+            problems.append("통과해야 할 테스트")
         if not 1 <= len(self.files) <= MAX_FILES:
             problems.append(f"수정할 파일은 1~{MAX_FILES}개")
         return problems

@@ -39,7 +39,7 @@ tests/test_calc.py 통과
 
 ### 통과해야 할 테스트 (선택)
 
-_No response_
+test_add
 
 ### 하지 않을 것
 
@@ -60,14 +60,20 @@ def test_issue_form_body_becomes_a_task() -> None:
 
     assert task.goal == "add가 두 수를 더한다"
     assert task.files == ("calc.py", "tests/test_calc.py")
-    assert task.tests == ""
+    assert task.tests == "test_add"
     assert task.missing() == []
 
 
 def test_task_without_required_fields_is_not_taken() -> None:
     task = parse_task(7, "제목", "### 목표\n\n뭔가 한다\n")
 
-    assert task.missing() == ["완료 기준", "하지 않을 것", "수정할 파일은 1~3개"]
+    assert task.missing() == ["완료 기준", "하지 않을 것", "통과해야 할 테스트", "수정할 파일은 1~3개"]
+
+
+def test_task_without_a_named_test_is_not_taken_because_doing_nothing_would_pass() -> None:
+    task = parse_task(7, "제목", BODY.replace("test_add\n", "_No response_\n"))
+
+    assert task.missing() == ["통과해야 할 테스트"]
 
 
 def test_guards_allow_targets_and_new_tests_only(tmp_path: Path) -> None:
@@ -232,7 +238,7 @@ def test_fenced_question_is_still_a_question(tmp_path: Path) -> None:
 
 def test_tests_named_in_the_issue_must_exist(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "repo")
-    body = BODY.replace("### 통과해야 할 테스트 (선택)\n\n_No response_", "### 통과해야 할 테스트 (선택)\n\ntest_add_zero")
+    body = BODY.replace("test_add\n", "test_add_zero\n")
     added = FIXED.replace(
         "=== END ===",
         "=== END ===\n=== FILE: tests/test_zero.py ===\n<<<<<<< SEARCH\n=======\nfrom calc import add\n\n\ndef test_add_zero():\n"
