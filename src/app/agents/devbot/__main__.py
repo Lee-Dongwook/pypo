@@ -31,7 +31,7 @@ def _model(reference: str):
     return resolve_chat_model(reference, **extra)
 
 
-def _publish(state: DevbotState, root: Path | None, base: str) -> str | None:
+def _publish(state: DevbotState, root: Path | None) -> str | None:
     """결과를 GitHub에 남기고, PR을 열었으면 주소를 돌려준다 (docs/DEVBOT.md 4절 5단계)."""
     task, outcome = state.get("task"), state["outcome"]
     if task is None:
@@ -40,7 +40,8 @@ def _publish(state: DevbotState, root: Path | None, base: str) -> str | None:
         branch = branch_name(task.number, task.title)
         workspace.push(root, branch, github.commit_message(task))
         body = github.pr_body(task, state.get("checks", []), state["attempts"], state.get("remembered", False))
-        url = github.create_pr(task, branch, base.removeprefix("origin/"), body)
+        # `--base`는 작업을 시작할 커밋일 뿐이다. 실패하는 테스트를 먼저 넣은 브랜치에서 시작해도 PR은 main으로 간다.
+        url = github.create_pr(task, branch, "main", body)
         print(f"[pypo] PR: {url}")
         return url
     elif outcome == "question":
@@ -99,7 +100,7 @@ def main() -> None:
         print(f"[pypo] 변경 내용:\n{workspace.diff(root)}")
     try:
         if not args.dry_run:
-            _journal(state, _publish(state, root, args.base))
+            _journal(state, _publish(state, root))
     finally:
         if root is not None and args.keep:
             print(f"[pypo] 작업 공간: {root}")
