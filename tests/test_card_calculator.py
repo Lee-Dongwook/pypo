@@ -1,6 +1,10 @@
+import ast
+import inspect
+
 import pytest
 from pydantic import ValidationError
 
+from src.app.card import api, calculator, schemas
 from src.app.card.calculator import (
     analyze_card_tier,
     evaluate_card,
@@ -248,3 +252,19 @@ def test_tier_analysis_rejects_negative_spend():
     card = make_card()
     with pytest.raises(ValueError, match="실적 금액은 0 이상이어야 합니다"):
         analyze_card_tier(card, -1)
+
+
+def from_imports(module: object) -> dict[str, set[str]]:
+    """모듈 맨 위 `from X import a, b`를 {X: {a, b}}로."""
+    found: dict[str, set[str]] = {}
+    for node in ast.parse(inspect.getsource(module)).body:
+        if isinstance(node, ast.ImportFrom):
+            found.setdefault(node.module or "", set()).update(alias.name for alias in node.names)
+    return found
+
+
+def test_purchase_evaluation_lives_in_schemas_and_api_imports_it_from_there() -> None:
+    assert "class PurchaseEvaluation" in inspect.getsource(schemas)
+    assert "class PurchaseEvaluation" not in inspect.getsource(calculator)
+    assert "pydantic" not in from_imports(calculator)
+    assert "PurchaseEvaluation" in from_imports(api).get("schemas", set())
