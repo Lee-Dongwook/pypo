@@ -3,9 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
-
-from .schemas import AllocationPlan, CalculationStatus, Card, CardAdvice, TierAnalysis
+from .schemas import AllocationPlan, Card, CardAdvice, PurchaseEvaluation, TierAnalysis
 
 MAX_CANDIDATE_CARDS = 20
 
@@ -146,16 +144,6 @@ def plan_allocation(
         leftover=planned_spend - usage,
     )
 
-class PurchaseEvaluation(BaseModel):
-    card_id: str
-    name: str
-    status: CalculationStatus
-    expected_discount: int | None = Field(default=None, ge=0, description="예상 할인액(원). 계산 불가면 None")
-    current_tier_threshold: int | None = None
-    applied_discount_rate: Decimal | None = None
-    remaining_cap: int | None = None
-    clause: str
-    reason: str
 
 def analyze_card_tier(
     card: Card,
