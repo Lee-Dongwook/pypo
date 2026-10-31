@@ -320,7 +320,11 @@ def test_broken_syntax_is_left_to_pytest_not_reported_as_deleted_tests() -> None
     assert removed_tests("def test_a():\n    pass\n", "def test_a(:\n") == []
 
 
-@pytest.mark.skipif(subprocess.run(["docker", "info"], capture_output=True).returncode != 0, reason="Docker 없음")
+# 샌드박스 안에는 docker 명령이 없으므로 실행 전에 찾는다.
+HAS_DOCKER = shutil.which("docker") is not None and subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+
+
+@pytest.mark.skipif(not HAS_DOCKER, reason="Docker 없음")
 def test_sandbox_has_no_network_and_sees_only_the_worktree(tmp_path: Path) -> None:
     python = workspace.sandboxed_python(workspace.sandbox_image(REPO), tmp_path)
     probe = (
