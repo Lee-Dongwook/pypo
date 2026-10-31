@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from src.app.agents.devbot import workspace
+from src.app.agents.devbot import github, workspace
 from src.app.agents.devbot.graph import build_graph
-from src.app.agents.devbot.guards import MAX_ATTEMPTS, MAX_DIFF_LINES, path_violations, removed_tests
+from src.app.agents.devbot.guards import MAX_ATTEMPTS, MAX_DIFF_LINES, branch_name, path_violations, removed_tests
 from src.app.agents.devbot.issue import parse_task
 
 REPO = Path(__file__).resolve().parents[1]
@@ -335,3 +335,42 @@ def test_sandbox_has_no_network_and_sees_only_the_worktree(tmp_path: Path) -> No
     assert result.returncode != 0
     assert "OSError" in result.stderr or "unreachable" in result.stderr
     assert "AssertionError" not in result.stderr
+
+
+def test_branch_name_is_pypo_number_and_ascii_slug() -> None:
+    assert branch_name(1, "[pypo] analyze_card_tier 단위 테스트 추가") == "pypo/1-analyze-card-tier"
+    assert branch_name(2, "한글만 있는 제목") == "pypo/2-task"
+
+
+def test_commit_message_follows_agents_md_format() -> None:
+    tests_only = parse_task(1, "t", BODY.replace("calc.py\n", "tests/test_card_calculator.py\n"))
+    code = parse_task(2, "t", BODY.replace("calc.py\n", "src/app/card/calculator.py\n"))
+
+    assert github.commit_message(tests_only) == "test(card): resolve #1"
+    assert github.commit_message(code) == "feat(card): resolve #2"
+
+
+def test_pr_body_closes_the_issue_and_reports_checks() -> None:
+    checks = [workspace.Check("ruff", True, ""), workspace.Check("pytest", True, "12 passed, 1 skipped in 0.5s\n")]
+
+    body = github.pr_body(parse_task(7, "t", BODY), checks, attempts=1)
+
+    assert "- pytest: 12개 통과" in body
+    assert "2번째에 통과" in body
+    assert body.endswith("Closes #7\n\n— pypo")
+
+
+def test_push_goes_only_to_pypo_branches_as_pypo(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo, check=True)
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+
+    with pytest.raises(ValueError, match="pypo/"):
+        workspace.push(repo, "main", "fix(calc): resolve #1")
+    workspace.push(repo, "pypo/1-calc", "fix(calc): resolve #1")
+
+    log = subprocess.run(["git", "log", "-1", "--format=%an %s", "pypo/1-calc"], cwd=remote, capture_output=True,
+                         text=True, check=True).stdout
+    assert log == "pypo-agent fix(calc): resolve #1\n"
