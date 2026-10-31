@@ -125,3 +125,40 @@ def test_negative_remaining_cap_is_rejected() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_tier_analysis_api_reports_gap_to_next_tier():
+    response = client.post(
+        "/card/tier-analysis",
+        json={"spends": {"example-a": 300_000}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["analyses"]) == 1
+    analysis = body["analyses"][0]
+    assert analysis["next_threshold"] == 500_000
+    assert analysis["remaining_spend_to_next_tier"] == 200_000
+    assert analysis["incremental_cap_increase"] == 5_000
+
+
+def test_tier_analysis_api_marks_top_tier():
+    response = client.post(
+        "/card/tier-analysis",
+        json={"spends": {"example-a": 1_000_000}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["analyses"]) == 1
+    analysis = body["analyses"][0]
+    assert analysis["is_top_tier"] is True
+
+
+def test_tier_analysis_api_rejects_negative_spend():
+    response = client.post(
+        "/card/tier-analysis",
+        json={"spends": {"example-a": -1}},
+    )
+
+    assert response.status_code == 422
