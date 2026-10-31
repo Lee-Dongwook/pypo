@@ -233,6 +233,8 @@ WORKDIR /deps
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project $(grep -oE '^name = "(torch|triton|nvidia-[^"]*|cuda-[^"]*)"' uv.lock \
     | cut -d'"' -f2 | sed 's/^/--no-install-package /')
+# devbot 자신의 테스트가 git worktree를 쓴다.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 """
 _CHECK_TIMEOUT_SECONDS = 300
 
