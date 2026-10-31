@@ -22,6 +22,7 @@ _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M
 _DELETE_LINE = re.compile(r"^DELETE (\w+)[ \t]*\n?", re.M)
 _MOVE_LINE = re.compile(r"^MOVE (\w+) TO (\S+)[ \t]*\n?", re.M)
 _RENAME_LINE = re.compile(r"^RENAME (\w+) TO (\w+)[ \t]*\n?", re.M)
+_ADD_PREFIX = re.compile(r"^ADD[ \t]+", re.M)
 MAX_IMPORTERS = 30
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
@@ -178,6 +179,7 @@ def parse_edits(text: str) -> list[Edit]:
         edits += [Edit(path, "", "", name) for name in _DELETE_LINE.findall(body)]
         edits += [Edit(path, "", "", old, rename_to=new) for old, new in _RENAME_LINE.findall(body)]
         body = _RENAME_LINE.sub("", _DELETE_LINE.sub("", _MOVE_LINE.sub("", body)))
+        body = _ADD_PREFIX.sub("", body)  # 7B는 덧붙이기에 없는 동사 `ADD`를 붙이곤 한다 (#3 평가).
         if blocks := _EDIT_BLOCK.findall(body):
             edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):

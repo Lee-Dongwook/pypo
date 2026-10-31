@@ -696,3 +696,9 @@ def test_files_importing_the_issue_files_are_shown_to_the_model(tmp_path: Path) 
     assert workspace.importers(tmp_path, ("src/card/calc.py",)) == (
         "src/card/api.py:1: from .calc import evaluate\ntests/test_calc.py:1: from src.card.calc import evaluate"
     )
+
+
+def test_made_up_add_verb_is_read_as_a_plain_append() -> None:
+    edits = workspace.parse_edits("=== FILE: a.py ===\nADD from b import c\n\nx = c\n=== END ===")
+
+    assert edits == [workspace.Edit("a.py", "", "from b import c\n\nx = c\n")]
