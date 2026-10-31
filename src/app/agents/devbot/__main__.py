@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import date
 from functools import partial
 from pathlib import Path
 
@@ -29,16 +30,18 @@ def _model(reference: str):
     return resolve_chat_model(reference, **extra)
 
 
-def _publish(state: DevbotState, root: Path | None, base: str) -> None:
-    """결과를 GitHub에 남긴다 (docs/DEVBOT.md 4절 5단계)."""
+def _publish(state: DevbotState, root: Path | None, base: str) -> str | None:
+    """결과를 GitHub에 남기고, PR을 열었으면 주소를 돌려준다 (docs/DEVBOT.md 4절 5단계)."""
     task, outcome = state.get("task"), state["outcome"]
     if task is None:
-        return
+        return None
     if outcome == "passed" and root is not None:
         branch = branch_name(task.number, task.title)
         workspace.push(root, branch, github.commit_message(task))
-        body = github.pr_body(task, state.get("checks", []), state["attempts"])
-        print(f"[pypo] PR: {github.create_pr(task, branch, base.removeprefix('origin/'), body)}")
+        body = github.pr_body(task, state.get("checks", []), state["attempts"], state.get("remembered", False))
+        url = github.create_pr(task, branch, base.removeprefix("origin/"), body)
+        print(f"[pypo] PR: {url}")
+        return url
     elif outcome == "question":
         github.comment(task.number, f"작업 전에 확인이 필요합니다.\n\n{state['message']}\n\n"
                        f"답을 남기고 `{github.QUESTION}` 라벨을 지우면 다시 작업합니다.", github.QUESTION)
@@ -46,6 +49,17 @@ def _publish(state: DevbotState, root: Path | None, base: str) -> None:
         github.comment(task.number, f"{state['attempts']}번 시도했지만 검증을 통과하지 못했습니다. "
                        f"이슈를 더 작게 나누거나 직접 처리해 주세요.\n\n## 마지막 에러\n\n"
                        f"```\n{state['message'][-2000:]}\n```", github.FAILED)
+    return None
+
+
+def _journal(state: DevbotState, pr_url: str | None) -> None:
+    entry = github.journal_entry(date.today(), state.get("task"), state["outcome"], state.get("message", ""),
+                                 state.get("calls", 0), pr_url, state.get("remembered", False))
+    if (number := github.journal_issue()) is None:
+        print(f"[pypo] '{github.JOURNAL_TITLE}' 이슈가 없어 일일 요약을 남기지 않습니다.\n{entry}")
+        return
+    github.comment(number, entry)
+    print(f"[pypo] 일일 요약: #{number}")
 
 
 def main() -> None:
@@ -77,13 +91,14 @@ def main() -> None:
         print(f"[pypo] {line[:800]}")
     for check in state.get("checks", []):
         print(f"[pypo] {check.name}: {'통과' if check.ok else '실패'}")
+    print(f"[pypo] LLM 호출: {state.get('calls', 0)}회")
 
     root = Path(worktree) if (worktree := state.get("worktree")) else None
     if root is not None and state["outcome"] == "passed":
         print(f"[pypo] 변경 내용:\n{workspace.diff(root)}")
     try:
         if not args.dry_run:
-            _publish(state, root, args.base)
+            _journal(state, _publish(state, root, args.base))
     finally:
         if root is not None and args.keep:
             print(f"[pypo] 작업 공간: {root}")

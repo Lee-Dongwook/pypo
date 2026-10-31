@@ -1,13 +1,14 @@
 import shutil
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from src.app.agents.devbot import github, workspace
-from src.app.agents.devbot.graph import build_graph
+from src.app.agents.devbot import github, memory, workspace
+from src.app.agents.devbot.graph import LOG_DIR, build_graph
 from src.app.agents.devbot.guards import MAX_ATTEMPTS, MAX_DIFF_LINES, branch_name, path_violations, removed_tests
 from src.app.agents.devbot.issue import parse_task
 
@@ -378,3 +379,72 @@ def test_push_goes_only_to_pypo_branches_as_pypo(tmp_path: Path) -> None:
     log = subprocess.run(["git", "log", "-1", "--format=%an %s", "pypo/1-calc"], cwd=remote, capture_output=True,
                          text=True, check=True).stdout
     assert log == "pypo-agent fix(calc): resolve #1\n"
+
+
+LESSON = "상황: add 수정에서 형식 없이 답함\n원인: FILE 블록을 쓰지 않음\n해결: 첫 줄부터 FILE 블록으로 시작한다"
+
+
+def test_failure_then_pass_is_remembered_in_the_pr(tmp_path: Path) -> None:
+    state = run(make_repo(tmp_path / "repo"), ["형식 없는 답", FIXED, LESSON])
+
+    assert state["outcome"] == "passed"
+    assert state["calls"] == 3
+    assert state["remembered"] is True
+    assert "+- #1 상황: add 수정에서 형식 없이 답함 / 원인: FILE 블록을 쓰지 않음 / 해결: 첫 줄부터" in state["diff"]
+
+
+def test_first_try_pass_leaves_no_memory(tmp_path: Path) -> None:
+    state = run(make_repo(tmp_path / "repo"), [FIXED])
+
+    assert state["calls"] == 1
+    assert "mistakes.md" not in state["diff"]
+
+
+def test_malformed_lesson_is_skipped_not_retried(tmp_path: Path) -> None:
+    state = run(make_repo(tmp_path / "repo"), ["형식 없는 답", FIXED, "잘 모르겠습니다"])
+
+    assert state["outcome"] == "passed"
+    assert state["calls"] == 3
+    assert "mistakes.md" not in state["diff"]
+
+
+def test_memory_skips_duplicate_fixes_and_keeps_the_newest(tmp_path: Path) -> None:
+    lesson = memory.parse_lesson(LESSON)
+    assert lesson is not None
+
+    assert memory.remember(tmp_path, 1, lesson) is True
+    assert memory.remember(tmp_path, 2, lesson) is False
+    for i in range(memory.MAX_ENTRIES + 5):
+        memory.remember(tmp_path, 3, (f"상황{i}", "원인", f"해결{i}"))
+
+    entries = [line for line in (tmp_path / memory.MISTAKES).read_text().splitlines() if line.startswith("- ")]
+    assert len(entries) == memory.MAX_ENTRIES
+    assert entries[-1].endswith(f"해결: 해결{memory.MAX_ENTRIES + 4}")
+
+
+def test_memory_in_the_base_commit_is_given_to_the_model(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    (repo / "agent" / "memory").mkdir()
+    (repo / memory.MISTAKES).write_text("- #9 상황: x / 원인: y / 해결: 기억해 둔 해결\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "memory"], cwd=repo, check=True)
+
+    run(repo, [FIXED])
+
+    assert "기억해 둔 해결" in (LOG_DIR / "issue1-try1.prompt.md").read_text()
+
+
+def test_journal_entry_reports_result_and_calls() -> None:
+    task = parse_task(1, "[pypo] add 고치기", BODY)
+
+    entry = github.journal_entry(date(2026, 10, 31), task, "passed", "2번째 시도에서 통과", 3,
+                                 "https://github.com/o/r/pull/7", remembered=True)
+
+    assert entry.splitlines()[:5] == [
+        "## 2026-10-31",
+        "",
+        "- 이슈: #1 add 고치기",
+        "- 결과: PR https://github.com/o/r/pull/7 (2번째 시도에서 통과)",
+        "- LLM 호출: 3회",
+    ]
+    assert "mistakes.md" in entry

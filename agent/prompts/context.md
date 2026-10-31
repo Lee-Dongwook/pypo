@@ -15,3 +15,7 @@ $references
 # 수정할 파일 (현재 내용)
 
 $files
+
+# 지난 작업에서 배운 것
+
+$memory
