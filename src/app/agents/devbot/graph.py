@@ -41,6 +41,7 @@ class DevbotState(TypedDict, total=False):
     context: dict[str, str]
     attempts: int
     feedback: str
+    reply: str
     checks: list[workspace.Check]
     outcome: Outcome
     message: str
@@ -77,6 +78,8 @@ def _ask(model: BaseChatModel, prompt: str, step: str) -> str:
     (LOG_DIR / f"{step}.prompt.md").write_text(prompt, encoding="utf-8")
     (LOG_DIR / f"{step}.reply.md").write_text(str(reply.content), encoding="utf-8")
     meta = reply.response_metadata or {}
+    if meta.get("done_reason") == "length":
+        logger.warning("llm %s: 출력 상한(num_predict)에 걸려 답이 잘림", step)
     logger.info(
         "llm %s: 입력 %s토큰(읽는 데 %.0fs) 출력 %s토큰, 총 %.0fs → %s",
         step,
@@ -136,6 +139,7 @@ def build_graph(
         prompt = _prompt(repo, "implement", feedback=state["feedback"], **state["context"])
         attempt_model = model_for_attempt(model, state["attempts"])
         text = _ask(attempt_model, prompt, f"issue{state['task'].number}-try{state['attempts'] + 1}")
+        state = {**state, "reply": text}
         edits = workspace.parse_edits(text)
         # 짧은 질문만 질문으로 받는다. 작은 모델은 계획이나 코드 앞에도 QUESTION을 붙이곤 하는데, 그건 형식 오류다.
         question = _FENCE.sub("", text).strip()
@@ -166,7 +170,7 @@ def build_graph(
             return _retry(state, "출력이 규칙을 어겼습니다:\n- " + "\n- ".join(problems))
 
         workspace.apply(root, contents)
-        return {"feedback": ""}
+        return {"feedback": "", "reply": text}
 
     def verify(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
@@ -201,9 +205,14 @@ def build_graph(
         log = [f"{attempts}번째 시도 실패: {feedback}"]
         if attempts >= MAX_ATTEMPTS:
             return {"attempts": attempts, "outcome": "failed", "message": feedback, "feedback": feedback, "history": log}
+        # 매 시도는 원본에서 다시 시작한다. 이전 출력을 보여 줘야 처음부터 새로 짜지 않고 틀린 곳만 고친다.
         return {
             "attempts": attempts,
-            "feedback": f"\n# 이전 시도 실패 ({attempts}/{MAX_ATTEMPTS})\n\n{feedback}\n",
+            "feedback": (
+                f"\n# 이전 시도 실패 ({attempts}/{MAX_ATTEMPTS})\n\n{feedback}\n\n# 이전 출력\n\n{state['reply']}\n\n"
+                "이전 출력에서 위 문제만 고쳐 전체를 다시 낸다. 이전 수정은 지워졌으니 맞았던 블록도 빠짐없이 다시 쓴다. "
+                "문제와 상관없는 코드는 바꾸지 않는다.\n"
+            ),
             "history": log,
         }
 
