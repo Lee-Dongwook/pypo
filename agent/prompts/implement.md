@@ -12,7 +12,10 @@ $feedback
 
 1. **덧붙이기·새 파일:** 파일 끝에 붙일 코드만 쓴다. 기존 코드를 다시 쓰지 않는다. 새로 필요한 import는 코드 맨 위에 쓰면 pypo가 import 자리로 옮긴다.
 2. **기존 코드 바꾸기:** SEARCH/REPLACE를 쓴다. SEARCH에는 현재 내용을 한 글자도 바꾸지 않고 복사하고, 파일 안에서 딱 한 곳만 가리키도록 앞뒤 줄을 충분히 넣는다.
-3. **함수·클래스 통째로 지우기:** `DELETE 이름` 한 줄만 쓴다. 지울 코드를 베끼지 않는다. 정의를 다른 파일로 옮길 때는 새 파일 블록에 정의를 덧붙이고, 원래 파일 블록에 `DELETE 이름`과 새 위치에서 가져오는 import를 쓴다. 쓰지 않게 된 import는 pypo가 지운다.
+3. **함수·클래스 통째로 지우기:** `DELETE 이름` 한 줄만 쓴다. 지울 코드를 베끼지 않는다.
+4. **함수·클래스를 다른 파일로 옮기기:** 원래 파일 블록에 `MOVE 이름 TO <새 경로>` 한 줄만 쓴다. 옮길 코드를 다시 쓰지 않는다. pypo가 정의를 새 파일 끝으로 옮기고, 원래 파일에 새 위치에서 가져오는 import를 넣는다. 다른 파일이 그 이름을 원래 파일에서 import하고 있으면, 그 파일 블록에서 import를 SEARCH/REPLACE로 고친다.
+
+쓰지 않게 된 import는 pypo가 지운다.
 
 예시는 **형식만** 보여 준다. 예시의 파일 경로, 함수, 코드를 쓰지 않는다.
 
@@ -26,15 +29,18 @@ def test_perimeter_of_square():
     assert perimeter(2, 2) == 8
 === END ===
 
-옮기기 예시 (`Box`를 `lib/shapes.py`에서 `lib/models.py`로):
+옮기기 예시 (`Box`를 `lib/shapes.py`에서 `lib/models.py`로 옮기고, `lib/draw.py`의 import를 고친다):
 
-=== FILE: lib/models.py ===
-class Box:
-    width: int
-=== END ===
 === FILE: lib/shapes.py ===
-DELETE Box
-from lib.models import Box
+MOVE Box TO lib/models.py
+=== END ===
+=== FILE: lib/draw.py ===
+<<<<<<< SEARCH
+from .shapes import Box, area
+=======
+from .models import Box
+from .shapes import area
+>>>>>>> REPLACE
 === END ===
 
 바꾸기 예시:

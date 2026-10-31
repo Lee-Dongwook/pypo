@@ -13,10 +13,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .guards import BRANCH_PREFIX
+from .guards import BRANCH_PREFIX, normalize
 
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
 _DELETE_LINE = re.compile(r"^DELETE (\w+)[ \t]*\n?", re.M)
+_MOVE_LINE = re.compile(r"^MOVE (\w+) TO (\S+)[ \t]*\n?", re.M)
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
 MAX_FILE_CHARS = 8000
@@ -142,13 +143,15 @@ def reference_snippets(root: Path, targets: tuple[str, ...], hint: str) -> str:
 class Edit:
     """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다).
 
-    `delete`가 있으면 그 이름의 최상위 함수·클래스를 통째로 지운다.
+    `delete`가 있으면 그 이름의 최상위 함수·클래스를 통째로 지운다. `move_to`도 있으면 지운 정의를 그 파일 끝에
+    붙이고, 원래 파일에는 새 위치에서 가져오는 import를 남긴다.
     """
 
     path: str
     search: str
     replace: str
     delete: str = ""
+    move_to: str = ""
 
 
 class EditError(ValueError):
@@ -159,13 +162,15 @@ def parse_edits(text: str) -> list[Edit]:
     """모델 출력에서 `=== FILE ===` 블록을 꺼낸다. 블록 밖 글은 무시한다.
 
     SEARCH/REPLACE 표시가 있으면 찾아 바꾸기, 없으면 블록 안 코드 전체를 덧붙이기(새 파일이면 만들기)로 본다.
-    `DELETE 이름` 줄은 정의 지우기다. 7B 모델은 큰 정의를 SEARCH에 그대로 베끼지 못해서, 지우기는 이름만 받는다.
+    `DELETE 이름` 줄은 정의 지우기, `MOVE 이름 TO 경로` 줄은 정의 옮기기다. 7B 모델은 큰 정의를 그대로 베끼지 못해서
+    이름만 받고 코드는 pypo가 옮긴다.
     7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다. 모델이 쓴 줄 끝 공백은 지운다.
     """
     edits: list[Edit] = []
     for path, body in _FILE_BLOCK.findall(text):
+        edits += [Edit(path, "", "", name, normalize(target)) for name, target in _MOVE_LINE.findall(body)]
         edits += [Edit(path, "", "", name) for name in _DELETE_LINE.findall(body)]
-        body = _DELETE_LINE.sub("", body)
+        body = _DELETE_LINE.sub("", _MOVE_LINE.sub("", body))
         if blocks := _EDIT_BLOCK.findall(body):
             edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):
@@ -204,7 +209,8 @@ def _append(text: str, addition: str) -> str:
     return text.rstrip("\n") + ("\n\n\n" + body if body.strip() else "\n")
 
 
-def _delete(text: str, edit: Edit) -> str:
+def _cut(text: str, edit: Edit) -> tuple[str, str]:
+    """이름이 `edit.delete`인 최상위 함수·클래스를 잘라 (남은 내용, 잘라 낸 코드)로 돌려준다."""
     try:
         tree = ast.parse(text)
     except SyntaxError as error:
@@ -216,12 +222,21 @@ def _delete(text: str, edit: Edit) -> str:
     node = nodes[0]
     start = min([node.lineno, *(d.lineno for d in node.decorator_list)]) - 1
     lines = text.splitlines(keepends=True)
-    return re.sub(r"\n{4,}", "\n\n\n", "".join(lines[:start] + lines[node.end_lineno :]))
+    rest = re.sub(r"\n{4,}", "\n\n\n", "".join(lines[:start] + lines[node.end_lineno :]))
+    return rest, "".join(lines[start : node.end_lineno])
+
+
+def _import_line(source: str, target: str, name: str) -> str:
+    """`source` 파일에서 `target` 파일의 `name`을 가져오는 import. 같은 폴더면 상대 import."""
+    source_path, target_path = Path(source), Path(target)
+    if source_path.parent == target_path.parent:
+        return f"from .{target_path.stem} import {name}\n"
+    return f"from {'.'.join(target_path.with_suffix('').parts)} import {name}\n"
 
 
 def _replace_once(text: str, edit: Edit) -> str:
     if edit.delete:
-        return _delete(text, edit)
+        return _cut(text, edit)[0]
     if not edit.search.strip():
         return _append(text, edit.replace)
     if (count := text.count(edit.search)) == 1:
@@ -247,10 +262,16 @@ def apply_edits(root: Path, edits: list[Edit]) -> dict[str, str]:
     """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`."""
     contents: dict[str, str] = {}
     for edit in edits:
-        if edit.path not in contents:
-            file = root / edit.path
-            contents[edit.path] = file.read_text(encoding="utf-8") if file.exists() else ""
-        contents[edit.path] = _replace_once(contents[edit.path], edit)
+        for path in (edit.path, edit.move_to):
+            if path and path not in contents:
+                file = root / path
+                contents[path] = file.read_text(encoding="utf-8") if file.exists() else ""
+        if edit.move_to:
+            rest, code = _cut(contents[edit.path], edit)
+            contents[edit.move_to] = _append(contents[edit.move_to], code)
+            contents[edit.path] = _append(rest, _import_line(edit.path, edit.move_to, edit.delete))
+        else:
+            contents[edit.path] = _replace_once(contents[edit.path], edit)
     return contents
 
 

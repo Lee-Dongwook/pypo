@@ -168,7 +168,7 @@ def build_graph(
         if not edits and question.startswith("QUESTION:") and len(question.splitlines()) <= 4 and len(question) <= 400:
             return {"outcome": "question", "message": question.removeprefix("QUESTION:").strip()}
 
-        edit_paths = {e.path for e in edits}
+        edit_paths = {e.path for e in edits} | {e.move_to for e in edits if e.move_to}
         problems = path_violations(edit_paths, state["task"].files, root) if edits else [
             "출력 형식에 맞는 SEARCH/REPLACE 블록이 없음. 설명 없이 첫 줄부터 `=== FILE: <경로> ===`로 시작할 것"
         ]

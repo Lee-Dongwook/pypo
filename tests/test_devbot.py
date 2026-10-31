@@ -569,3 +569,18 @@ def test_deleting_an_unknown_definition_is_reported_with_its_name(tmp_path: Path
 
     with pytest.raises(workspace.EditError, match="Box"):
         workspace.apply_edits(tmp_path, edits)
+
+
+def test_move_line_cuts_a_definition_into_another_file_and_leaves_an_import(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text(
+        "class Box:\n    width: int\n\n\ndef area(box: Box) -> int:\n    return box.width\n", encoding="utf-8"
+    )
+    (tmp_path / "lib" / "models.py").write_text("import dataclasses\n\n\nclass Circle:\n    r: int\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: lib/shapes.py ===\nMOVE Box TO lib/models.py\n=== END ===")
+
+    contents = workspace.apply_edits(tmp_path, edits)
+
+    assert "class Box" not in contents["lib/shapes.py"]
+    assert contents["lib/shapes.py"].startswith("from .models import Box\n")
+    assert contents["lib/models.py"].endswith("class Circle:\n    r: int\n\n\nclass Box:\n    width: int\n")
