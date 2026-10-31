@@ -38,7 +38,7 @@ def _publish(state: DevbotState, root: Path | None) -> str | None:
         return None
     if outcome == "passed" and root is not None:
         branch = branch_name(task.number, task.title)
-        workspace.push(root, branch, github.commit_message(task))
+        branch = workspace.push(root, branch, github.commit_message(task))
         body = github.pr_body(task, state.get("checks", []), state["attempts"], state.get("remembered", False))
         # `--base`는 작업을 시작할 커밋일 뿐이다. 실패하는 테스트를 먼저 넣은 브랜치에서 시작해도 PR은 main으로 간다.
         url = github.create_pr(task, branch, "main", body)

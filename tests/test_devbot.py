@@ -425,6 +425,20 @@ def test_push_goes_only_to_pypo_branches_as_pypo(tmp_path: Path) -> None:
     assert log == "pypo-agent fix(calc): resolve #1\n"
 
 
+def test_redoing_an_issue_pushes_a_new_branch_instead_of_overwriting(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo, check=True)
+
+    names = []
+    for content in ("a + b", "b + a", "a + b + 0"):
+        (repo / "calc.py").write_text(f"def add(a, b):\n    return {content}\n")
+        names.append(workspace.push(repo, "pypo/1-calc", "fix(calc): resolve #1"))
+
+    assert names == ["pypo/1-calc", "pypo/1-calc-2", "pypo/1-calc-3"]
+
+
 LESSON = "상황: add 수정에서 형식 없이 답함\n원인: FILE 블록을 쓰지 않음\n해결: 첫 줄부터 FILE 블록으로 시작한다"
 
 

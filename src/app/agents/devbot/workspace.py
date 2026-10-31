@@ -401,13 +401,20 @@ def diff(root: Path) -> str:
     return _git(root, "diff", "--cached")
 
 
-def push(root: Path, branch: str, message: str) -> None:
-    """검증을 통과한 변경을 pypo 이름으로 커밋하고 `pypo/*` 브랜치로 푸시한다. 이미 있는 브랜치는 덮어쓰지 않는다."""
+def push(root: Path, branch: str, message: str) -> str:
+    """검증을 통과한 변경을 pypo 이름으로 커밋하고 `pypo/*` 브랜치로 푸시한 뒤 실제 브랜치 이름을 돌려준다.
+
+    이미 있는 브랜치는 덮어쓰지 않는다. 같은 이슈를 다시 하면(이전 PR이 열려 있어도) `-2`, `-3`을 붙인다.
+    """
     if not branch.startswith(BRANCH_PREFIX):
         raise ValueError(f"{branch}: pypo는 {BRANCH_PREFIX}* 브랜치에만 푸시합니다")
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=pypo-agent", "-c", "user.email=pypo-agent@noreply.localhost", "commit", "-qm", message)
-    _git(root, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
+    taken = set(re.findall(r"refs/heads/(\S+)", _git(root, "ls-remote", "--heads", "origin", f"{branch}*")))
+    candidates = [branch, *(f"{branch}-{n}" for n in range(2, len(taken) + 2))]
+    name = next(candidate for candidate in candidates if candidate not in taken)
+    _git(root, "push", "--quiet", "origin", f"HEAD:refs/heads/{name}")
+    return name
 
 
 def missing_tests(root: Path, names: list[str]) -> list[str]:
