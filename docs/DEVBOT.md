@@ -74,15 +74,15 @@ LLM은 표시된 두 단계에서만 씁니다. 나머지는 일반 코드가 �
 
 이슈 템플릿 (`.github/ISSUE_TEMPLATE/bot-task.yml`) 필수 항목:
 
-| 항목                      | 예시                                                          |
-| ------------------------- | ------------------------------------------------------------- |
-| 목표 (한 문장)            | `plan_allocation`이 실적 미입력 카드를 거절한다               |
-| 수정할 파일 (1~3개)       | `src/app/card/calculator.py`, `tests/test_card_calculator.py` |
-| 완료 기준                 | 실적이 빠진 카드를 넘기면 `ValueError`, 메시지에 카드 ID 포함 |
-| 통과해야 할 테스트 (선택) | `test_missing_spend_is_rejected_not_treated_as_zero`          |
-| 하지 않을 것              | API 응답 형식은 바꾸지 않는다                                 |
+| 항목                | 예시                                                          |
+| ------------------- | ------------------------------------------------------------- |
+| 목표 (한 문장)      | `plan_allocation`이 실적 미입력 카드를 거절한다               |
+| 수정할 파일 (1~3개) | `src/app/card/calculator.py`, `tests/test_card_calculator.py` |
+| 완료 기준           | 실적이 빠진 카드를 넘기면 `ValueError`, 메시지에 카드 ID 포함 |
+| 통과해야 할 테스트  | `test_missing_spend_is_rejected_not_treated_as_zero`          |
+| 하지 않을 것        | API 응답 형식은 바꾸지 않는다                                 |
 
-필수 항목이 비어 있으면 봇은 그 이슈를 고르지 않습니다.
+필수 항목이 비어 있으면 봇은 그 이슈를 고르지 않습니다. 테스트 이름이 없으면 검증이 ruff·pytest뿐이라 아무것도 안 한 답도 통과하므로, 테스트도 필수입니다(#3). 리팩터링처럼 테스트를 고치지 않는 이슈는 사람이 실패하는 테스트를 먼저 넣어 둡니다.
 
 **라벨**
 
@@ -127,7 +127,7 @@ LLM은 표시된 두 단계에서만 씁니다. 나머지는 일반 코드가 �
 | 수정 금지 경로   | `migrations/`, `.github/`, `.env*`, `uv.lock`, `pnpm-lock.yaml`, `agent/persona.md`, 안전장치 코드(`src/app/agents/devbot/guards.py`), 평가 코드와 문제 세트(`agent/evals/`). 파일 쓰기 도구가 거부함 |
 | 허용 경로        | 이슈에 지정된 파일과, 이름이 `tests/test_*.py`인 새 파일만                                                                                                                                            |
 | 실행 가능한 명령 | 허용 목록만 (`uv run pytest`, `uv run ruff check`, `pnpm typecheck`)                                                                                                                                  |
-| 검증 샌드박스     | ruff·pytest는 Docker 컨테이너에서 실행. 네트워크 없음, worktree만 마운트, 의존성은 `uv.lock`으로 미리 만든 이미지. Docker가 없으면 실행하지 않음 |
+| 검증 샌드박스    | ruff·pytest는 Docker 컨테이너에서 실행. 네트워크 없음, worktree만 마운트, 의존성은 `uv.lock`으로 미리 만든 이미지. Docker가 없으면 실행하지 않음                                                      |
 | 브랜치           | `pypo/*`에만 푸시. main 직접 푸시 불가 (브랜치 보호 규칙으로도 막음)                                                                                                                                  |
 | 변경 규모        | 변경 400줄 초과 시 PR을 만들지 않음                                                                                                                                                                   |
 | 리뷰 대기 상한   | 리뷰 대기 봇 PR 3개 이상이면 새 작업을 시작하지 않음                                                                                                                                                  |
