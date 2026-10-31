@@ -13,9 +13,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .guards import BRANCH_PREFIX
+from .guards import BRANCH_PREFIX, normalize
 
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
+_DELETE_LINE = re.compile(r"^DELETE (\w+)[ \t]*\n?", re.M)
+_MOVE_LINE = re.compile(r"^MOVE (\w+) TO (\S+)[ \t]*\n?", re.M)
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
 MAX_FILE_CHARS = 8000
@@ -139,11 +141,17 @@ def reference_snippets(root: Path, targets: tuple[str, ...], hint: str) -> str:
 
 @dataclass(frozen=True)
 class Edit:
-    """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다)."""
+    """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다).
+
+    `delete`가 있으면 그 이름의 최상위 함수·클래스를 통째로 지운다. `move_to`도 있으면 지운 정의를 그 파일 끝에
+    붙이고, 원래 파일에는 새 위치에서 가져오는 import를 남긴다.
+    """
 
     path: str
     search: str
     replace: str
+    delete: str = ""
+    move_to: str = ""
 
 
 class EditError(ValueError):
@@ -154,15 +162,49 @@ def parse_edits(text: str) -> list[Edit]:
     """모델 출력에서 `=== FILE ===` 블록을 꺼낸다. 블록 밖 글은 무시한다.
 
     SEARCH/REPLACE 표시가 있으면 찾아 바꾸기, 없으면 블록 안 코드 전체를 덧붙이기(새 파일이면 만들기)로 본다.
+    `DELETE 이름` 줄은 정의 지우기, `MOVE 이름 TO 경로` 줄은 정의 옮기기다. 7B 모델은 큰 정의를 그대로 베끼지 못해서
+    이름만 받고 코드는 pypo가 옮긴다.
     7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다. 모델이 쓴 줄 끝 공백은 지운다.
     """
     edits: list[Edit] = []
     for path, body in _FILE_BLOCK.findall(text):
+        edits += [Edit(path, "", "", name, normalize(target)) for name, target in _MOVE_LINE.findall(body)]
+        edits += [Edit(path, "", "", name) for name in _DELETE_LINE.findall(body)]
+        body = _DELETE_LINE.sub("", _MOVE_LINE.sub("", body))
         if blocks := _EDIT_BLOCK.findall(body):
             edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):
             edits.append(Edit(path, "", _strip_trailing(code) + "\n"))
-    return edits
+    return _deletes_retyped_elsewhere_are_moves(edits)
+
+
+def _deletes_retyped_elsewhere_are_moves(edits: list[Edit]) -> list[Edit]:
+    """한 파일에서 DELETE하고 다른 파일에 같은 이름을 다시 쳐 붙이면 옮기기로 본다.
+
+    7B 모델은 옮기기를 늘 이렇게 하고, 다시 친 코드에 없던 검증을 지어 넣기도 한다 (#3).
+    그래서 다시 친 정의는 버리고 원본을 MOVE로 옮긴다. 다시 친 블록에 함께 쓴 import도 버린다 (순환 import를 만들곤 한다).
+    """
+    deleted = {edit.delete: edit.path for edit in edits if edit.delete and not edit.move_to}
+    targets: dict[str, str] = {}
+    result: list[Edit] = []
+    for edit in edits:
+        if edit.search or edit.delete:
+            result.append(edit)
+            continue
+        retyped = {name for name in _top_level_names(edit.replace) if deleted.get(name, edit.path) != edit.path}
+        if not retyped:
+            result.append(edit)
+            continue
+        targets.update(dict.fromkeys(retyped, edit.path))
+        rest = edit.replace
+        for name in retyped:
+            rest = _cut(rest, Edit(edit.path, "", "", name))[0]
+        if _top_level_names(rest) or any(
+            not isinstance(node, ast.Import | ast.ImportFrom) for node in ast.parse(rest).body
+        ):
+            result.append(Edit(edit.path, "", rest))
+    return [Edit(e.path, "", "", e.delete, targets[e.delete]) if e.delete in targets and not e.move_to else e
+            for e in result]
 
 
 def _strip_trailing(code: str) -> str:
@@ -196,7 +238,34 @@ def _append(text: str, addition: str) -> str:
     return text.rstrip("\n") + ("\n\n\n" + body if body.strip() else "\n")
 
 
+def _cut(text: str, edit: Edit) -> tuple[str, str]:
+    """이름이 `edit.delete`인 최상위 함수·클래스를 잘라 (남은 내용, 잘라 낸 코드)로 돌려준다."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as error:
+        raise EditError(f"{edit.path}: 문법 오류가 있어 {edit.delete}를 지울 수 없음 ({error.msg})") from error
+    kinds = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    nodes = [node for node in tree.body if isinstance(node, kinds) and node.name == edit.delete]
+    if len(nodes) != 1:
+        raise EditError(f"{edit.path}: 지울 최상위 함수·클래스 {edit.delete}가 {len(nodes)}개 있음. 정확한 이름을 쓸 것")
+    node = nodes[0]
+    start = min([node.lineno, *(d.lineno for d in node.decorator_list)]) - 1
+    lines = text.splitlines(keepends=True)
+    rest = re.sub(r"\n{4,}", "\n\n\n", "".join(lines[:start] + lines[node.end_lineno :]))
+    return rest, "".join(lines[start : node.end_lineno])
+
+
+def _import_line(source: str, target: str, name: str) -> str:
+    """`source` 파일에서 `target` 파일의 `name`을 가져오는 import. 같은 폴더면 상대 import."""
+    source_path, target_path = Path(source), Path(target)
+    if source_path.parent == target_path.parent:
+        return f"from .{target_path.stem} import {name}\n"
+    return f"from {'.'.join(target_path.with_suffix('').parts)} import {name}\n"
+
+
 def _replace_once(text: str, edit: Edit) -> str:
+    if edit.delete:
+        return _cut(text, edit)[0]
     if not edit.search.strip():
         return _append(text, edit.replace)
     if (count := text.count(edit.search)) == 1:
@@ -218,15 +287,92 @@ def _replace_once(text: str, edit: Edit) -> str:
     return "".join(lines[:i]) + edit.replace + "".join(lines[i + len(wanted) :])
 
 
-def apply_edits(root: Path, edits: list[Edit]) -> dict[str, str]:
-    """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`."""
-    contents: dict[str, str] = {}
+def _top_level_names(code: str) -> set[str]:
+    try:
+        body = ast.parse(code).body
+    except SyntaxError:
+        return set()
+    return {node.name for node in body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)}
+
+
+def rewritten_definitions(root: Path, edits: list[Edit]) -> list[str]:
+    """덧붙이기 블록이 파일에 이미 있는 함수·클래스를 다시 쓴 경우. 7B는 옮기기를 파일 통째로 다시 쓰기로 착각한다."""
+    problems = []
     for edit in edits:
-        if edit.path not in contents:
-            file = root / edit.path
-            contents[edit.path] = file.read_text(encoding="utf-8") if file.exists() else ""
-        contents[edit.path] = _replace_once(contents[edit.path], edit)
+        file = root / edit.path
+        if edit.search or edit.delete or not file.exists():
+            continue
+        if again := sorted(_top_level_names(edit.replace) & _top_level_names(file.read_text(encoding="utf-8"))):
+            problems.append(
+                f"{edit.path}: 이미 있는 {', '.join(again)}를 다시 씀. 덧붙이기에는 새 코드만 쓴다. "
+                "정의를 다른 파일로 옮길 때는 원래 파일 블록에 `MOVE 이름 TO <새 경로>` 한 줄만 쓴다"
+            )
+    return problems
+
+
+def apply_edits(root: Path, edits: list[Edit], importers: tuple[str, ...] = ()) -> dict[str, str]:
+    """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`.
+
+    MOVE가 있으면 `importers`(이슈에 지정된 파일) 중 옮긴 이름을 원래 파일에서 import하던 곳을 새 위치로 고친다.
+    IDE의 옮기기 리팩터링과 같다. 7B는 이 import를 자주 놓친다 (#3).
+    """
+    contents: dict[str, str] = {}
+
+    def load(path: str) -> None:
+        if path not in contents:
+            file = root / path
+            contents[path] = file.read_text(encoding="utf-8") if file.exists() else ""
+
+    for edit in edits:
+        for path in (edit.path, edit.move_to):
+            if path:
+                load(path)
+        if edit.move_to:
+            rest, code = _cut(contents[edit.path], edit)
+            contents[edit.move_to] = _append(contents[edit.move_to], code)
+            contents[edit.path] = _append(rest, _import_line(edit.path, edit.move_to, edit.delete))
+        else:
+            contents[edit.path] = _replace_once(contents[edit.path], edit)
+
+    for move in (edit for edit in edits if edit.move_to):
+        for path in importers:
+            if path.endswith(".py") and path not in (move.path, move.move_to) and (root / path).exists():
+                load(path)
+                contents[path] = _redirect_import(contents[path], path, move)
     return contents
+
+
+def _imports_from(node: ast.ImportFrom, importer: str, source: str) -> bool:
+    """`importer` 파일의 이 import가 `source` 파일을 가리키는지."""
+    source_path = Path(source).with_suffix("")
+    if node.level == 0:
+        return node.module == ".".join(source_path.parts)
+    base = Path(importer).parent
+    for _ in range(node.level - 1):
+        base = base.parent
+    return base / (node.module or "").replace(".", "/") == source_path
+
+
+def _redirect_import(text: str, path: str, move: Edit) -> str:
+    """`from <원래 파일> import ..., 이름, ...`에서 이름을 빼고 `from <새 파일> import 이름`을 넣는다."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+    for node in tree.body:
+        if not (isinstance(node, ast.ImportFrom) and _imports_from(node, path, move.path)):
+            continue
+        moved = [alias for alias in node.names if alias.name == move.delete]
+        if not moved:
+            continue
+        kept = [alias for alias in node.names if alias.name != move.delete]
+        names = ", ".join(f"{a.name} as {a.asname}" if a.asname else a.name for a in kept)
+        statement = f"from {'.' * node.level}{node.module or ''} import {names}\n" if kept else ""
+        lines = text.splitlines(keepends=True)
+        text = "".join(lines[: node.lineno - 1]) + statement + "".join(lines[node.end_lineno :])
+        alias = f" as {moved[0].asname}" if moved[0].asname else ""
+        return _append(text, _import_line(path, move.move_to, move.delete).replace("\n", f"{alias}\n"))
+    return text
 
 
 def reset(root: Path) -> None:
@@ -255,13 +401,20 @@ def diff(root: Path) -> str:
     return _git(root, "diff", "--cached")
 
 
-def push(root: Path, branch: str, message: str) -> None:
-    """검증을 통과한 변경을 pypo 이름으로 커밋하고 `pypo/*` 브랜치로 푸시한다. 이미 있는 브랜치는 덮어쓰지 않는다."""
+def push(root: Path, branch: str, message: str) -> str:
+    """검증을 통과한 변경을 pypo 이름으로 커밋하고 `pypo/*` 브랜치로 푸시한 뒤 실제 브랜치 이름을 돌려준다.
+
+    이미 있는 브랜치는 덮어쓰지 않는다. 같은 이슈를 다시 하면(이전 PR이 열려 있어도) `-2`, `-3`을 붙인다.
+    """
     if not branch.startswith(BRANCH_PREFIX):
         raise ValueError(f"{branch}: pypo는 {BRANCH_PREFIX}* 브랜치에만 푸시합니다")
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=pypo-agent", "-c", "user.email=pypo-agent@noreply.localhost", "commit", "-qm", message)
-    _git(root, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
+    taken = set(re.findall(r"refs/heads/(\S+)", _git(root, "ls-remote", "--heads", "origin", f"{branch}*")))
+    candidates = [branch, *(f"{branch}-{n}" for n in range(2, len(taken) + 2))]
+    name = next(candidate for candidate in candidates if candidate not in taken)
+    _git(root, "push", "--quiet", "origin", f"HEAD:refs/heads/{name}")
+    return name
 
 
 def missing_tests(root: Path, names: list[str]) -> list[str]:

@@ -425,6 +425,20 @@ def test_push_goes_only_to_pypo_branches_as_pypo(tmp_path: Path) -> None:
     assert log == "pypo-agent fix(calc): resolve #1\n"
 
 
+def test_redoing_an_issue_pushes_a_new_branch_instead_of_overwriting(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo, check=True)
+
+    names = []
+    for content in ("a + b", "b + a", "a + b + 0"):
+        (repo / "calc.py").write_text(f"def add(a, b):\n    return {content}\n")
+        names.append(workspace.push(repo, "pypo/1-calc", "fix(calc): resolve #1"))
+
+    assert names == ["pypo/1-calc", "pypo/1-calc-2", "pypo/1-calc-3"]
+
+
 LESSON = "상황: add 수정에서 형식 없이 답함\n원인: FILE 블록을 쓰지 않음\n해결: 첫 줄부터 FILE 블록으로 시작한다"
 
 
@@ -546,3 +560,82 @@ def add(a, b):
     assert len(rows) == 2
     assert "```" not in rows[0]["messages"][1]["content"]
     assert [row["ruff_fixed"] for row in rows] == [False, True]
+
+
+def test_delete_line_removes_a_whole_definition_so_the_model_need_not_copy_it(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text(
+        "import functools\n\n\n@functools.cache\nclass Box:\n    width: int\n\n\ndef area(w, h):\n    return w * h\n",
+        encoding="utf-8",
+    )
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nDELETE Box\nfrom models import Box\n=== END ===")
+
+    content = workspace.apply_edits(tmp_path, edits)["shapes.py"]
+
+    assert "class Box" not in content
+    assert "@functools.cache" not in content
+    assert "from models import Box" in content
+    assert "def area(w, h):" in content
+
+
+def test_deleting_an_unknown_definition_is_reported_with_its_name(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text("def area(w, h):\n    return w * h\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nDELETE Box\n=== END ===")
+
+    with pytest.raises(workspace.EditError, match="Box"):
+        workspace.apply_edits(tmp_path, edits)
+
+
+def test_move_line_cuts_a_definition_into_another_file_and_leaves_an_import(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text(
+        "class Box:\n    width: int\n\n\ndef area(box: Box) -> int:\n    return box.width\n", encoding="utf-8"
+    )
+    (tmp_path / "lib" / "models.py").write_text("import dataclasses\n\n\nclass Circle:\n    r: int\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: lib/shapes.py ===\nMOVE Box TO lib/models.py\n=== END ===")
+
+    contents = workspace.apply_edits(tmp_path, edits)
+
+    assert "class Box" not in contents["lib/shapes.py"]
+    assert contents["lib/shapes.py"].startswith("from .models import Box\n")
+    assert contents["lib/models.py"].endswith("class Circle:\n    r: int\n\n\nclass Box:\n    width: int\n")
+
+
+def test_rewriting_existing_definitions_is_rejected_with_a_move_hint(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text("class Box:\n    width: int\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nclass Box:\n    width: int\n\n\nclass New:\n    pass\n=== END ===")
+
+    problems = workspace.rewritten_definitions(tmp_path, edits)
+
+    assert len(problems) == 1
+    assert "Box" in problems[0] and "MOVE" in problems[0]
+    assert "New" not in problems[0]
+
+
+def test_delete_plus_retyped_copy_elsewhere_moves_the_original_instead(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text("class Box:\n    width: int\n", encoding="utf-8")
+    (tmp_path / "lib" / "models.py").write_text("class Circle:\n    r: int\n", encoding="utf-8")
+    reply = (
+        "=== FILE: lib/shapes.py ===\nDELETE Box\n=== END ===\n"
+        "=== FILE: lib/models.py ===\nfrom .shapes import Circle\n\nclass Box:\n    width: int\n"
+        "    invented: str = 'made up'\n=== END ==="
+    )
+
+    contents = workspace.apply_edits(tmp_path, workspace.parse_edits(reply))
+
+    assert contents["lib/models.py"].endswith("class Box:\n    width: int\n")
+    assert "invented" not in contents["lib/models.py"]
+    assert "from .shapes" not in contents["lib/models.py"]
+    assert contents["lib/shapes.py"].startswith("from .models import Box\n")
+
+
+def test_move_also_fixes_imports_in_other_issue_files(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text("class Box:\n    width: int\n\n\ndef area():\n    pass\n", encoding="utf-8")
+    (tmp_path / "lib" / "models.py").write_text("class Circle:\n    r: int\n", encoding="utf-8")
+    (tmp_path / "lib" / "draw.py").write_text("from .shapes import (\n    Box,\n    area,\n)\n\nx = Box\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: lib/shapes.py ===\nMOVE Box TO lib/models.py\n=== END ===")
+
+    contents = workspace.apply_edits(tmp_path, edits, ("lib/shapes.py", "lib/models.py", "lib/draw.py"))
+
+    assert contents["lib/draw.py"] == "from .shapes import area\nfrom .models import Box\n\nx = Box\n"
