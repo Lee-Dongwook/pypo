@@ -1,6 +1,6 @@
-"""pypo의 작업 흐름 (docs/DEVBOT.md 4절, 2~5단계).
+"""pypo의 작업 흐름 (docs/DEVBOT.md 4절).
 
-작업 고르기 → 구현 → 검증. LLM은 구현에만 쓰고, 나머지는 코드가 판정한다.
+작업 고르기 → 구현 → 검증 → (실패했다가 통과했으면) 회고. LLM은 구현과 회고에만 쓰고, 나머지는 코드가 판정한다.
 계획 단계는 7B 모델에서 판단이 틀리고 느려서 뺐다 (구현 단계가 QUESTION도 맡는다).
 """
 
@@ -20,7 +20,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from . import github, workspace
+from . import github, memory, workspace
 from .guards import MAX_ATTEMPTS, diff_line_violations, path_violations, removed_tests
 from .issue import Task, parse_task
 
@@ -44,6 +44,8 @@ class DevbotState(TypedDict, total=False):
     outcome: Outcome
     message: str
     history: Annotated[list[str], operator.add]
+    calls: Annotated[int, operator.add]
+    remembered: bool
 
 
 def _prompt(repo: Path, name: str, **values: str) -> str:
@@ -110,12 +112,16 @@ def build_graph(
                 "body": task.body,
                 "references": workspace.reference_snippets(root, task.files, task.body) or "(없음)",
                 "files": "\n\n".join(f"--- {p} ---\n{workspace.read(root, p)}" for p in task.files),
+                "memory": memory.read(root),
             }
             return {"task": task, "worktree": str(root), "context": context, "attempts": 0, "feedback": ""}
         reason = f" 건너뜀: {', '.join(skipped)}" if skipped else ""
         return {"outcome": "no_task", "message": f"가져갈 수 있는 이슈가 없습니다.{reason}"}
 
     def implement(state: DevbotState) -> DevbotState:
+        return {**_implement(state), "calls": 1}
+
+    def _implement(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
         prompt = _prompt(repo, "implement", feedback=state["feedback"], **state["context"])
         text = _ask(model, prompt, f"issue{state['task'].number}-try{state['attempts'] + 1}")
@@ -167,6 +173,18 @@ def build_graph(
 
         return {"outcome": "passed", "checks": checks, "message": f"{state['attempts'] + 1}번째 시도에서 통과"}
 
+    def retrospect(state: DevbotState) -> DevbotState:
+        """실패했다가 통과한 작업에서 배운 것을 기억에 남긴다. 형식이 틀리면 다시 묻지 않고 건너뛴다."""
+        root, task = Path(state["worktree"]), state["task"]
+        failure = state["history"][-1].split(": ", 1)[-1][-1500:]
+        prompt = _prompt(repo, "retrospect", failure=failure, diff=workspace.diff(root)[-3000:], **state["context"])
+        lesson = memory.parse_lesson(_ask(model, prompt, f"issue{task.number}-retrospect"))
+        if lesson is None:
+            return {"calls": 1, "history": ["회고: 형식이 맞지 않아 기억에 남기지 않음"]}
+        if not memory.remember(root, task.number, lesson):
+            return {"calls": 1, "history": ["회고: 이미 있는 내용이라 덧붙이지 않음"]}
+        return {"calls": 1, "remembered": True, "history": [f"회고: {memory.MISTAKES}에 추가 ({lesson[2]})"]}
+
     def _retry(state: DevbotState, feedback: str) -> DevbotState:
         attempts = state["attempts"] + 1
         log = [f"{attempts}번째 시도 실패: {feedback}"]
@@ -184,14 +202,18 @@ def build_graph(
         return "implement" if state["feedback"] else "verify"
 
     def after_verify(state: DevbotState) -> str:
+        if state.get("outcome") == "passed" and state["attempts"] > 0:
+            return "retrospect"
         return END if state.get("outcome") else "implement"
 
     graph = StateGraph(DevbotState)
     graph.add_node("pick", pick)
     graph.add_node("implement", implement)
     graph.add_node("verify", verify)
+    graph.add_node("retrospect", retrospect)
     graph.add_edge(START, "pick")
     graph.add_conditional_edges("pick", lambda s: END if s.get("outcome") else "implement")
     graph.add_conditional_edges("implement", after_implement)
     graph.add_conditional_edges("verify", after_verify)
+    graph.add_edge("retrospect", END)
     return graph.compile()

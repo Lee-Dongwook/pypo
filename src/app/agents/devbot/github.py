@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 from .guards import BRANCH_PREFIX
@@ -17,6 +18,7 @@ QUESTION = "bot-question"
 FAILED = "bot-failed"
 PAUSED = {QUESTION, FAILED}
 BOT = "pypo"
+JOURNAL_TITLE = "pypo 일지"
 SIGNATURE = "\n\n— pypo"
 
 
@@ -62,7 +64,7 @@ def commit_message(task: Task) -> str:
     return f"{kind}({scope}): resolve #{task.number}"
 
 
-def pr_body(task: Task, checks: Sequence[Check], attempts: int) -> str:
+def pr_body(task: Task, checks: Sequence[Check], attempts: int, remembered: bool = False) -> str:
     """`agent/persona.md`의 PR 본문 형식."""
     pytest = next((check.output for check in checks if check.name == "pytest"), "")
     passed = match.group(1) if (match := re.search(r"(\d+) passed", pytest)) else "?"
@@ -72,8 +74,10 @@ def pr_body(task: Task, checks: Sequence[Check], attempts: int) -> str:
         "## 확인\n\n"
         f"- ruff: 통과\n- pytest: {passed}개 통과\n- typecheck: {'실행 안 함' if web else '해당 없음'}\n"
         f"- 시도: {attempts + 1}번째에 통과\n\n"
-        "## 판단한 것\n\n판단 기록은 아직 남기지 않습니다 (회고 단계, M4).\n\n"
-        f"Closes #{task.number}{SIGNATURE}"
+        "## 판단한 것\n\n판단 기록은 아직 남기지 않습니다.\n\n"
+        + ("## 기억\n\n이번 실패와 해결을 `agent/memory/mistakes.md`에 추가했습니다. 다음 작업 입력에 들어가니 "
+           "내용이 맞는지 같이 봐 주세요.\n\n" if remembered else "")
+        + f"Closes #{task.number}{SIGNATURE}"
     )
 
 
@@ -84,7 +88,33 @@ def create_pr(task: Task, branch: str, base: str, body: str) -> str:
                "--label", BOT).strip()
 
 
-def comment(number: int, body: str, label: str) -> None:
-    """이슈에 코멘트를 남기고 라벨을 붙인다. 라벨이 붙은 이슈는 다음 후보에서 빠진다."""
+def comment(number: int, body: str, label: str | None = None) -> None:
+    """이슈에 코멘트를 남기고, 주면 라벨을 붙인다. 라벨이 붙은 이슈는 다음 후보에서 빠진다."""
     _gh("issue", "comment", str(number), "--body", body + SIGNATURE)
-    _gh("issue", "edit", str(number), "--add-label", label)
+    if label:
+        _gh("issue", "edit", str(number), "--add-label", label)
+
+
+def journal_issue() -> int | None:
+    """사람이 만들어 둔 "pypo 일지" 이슈 번호. pypo는 이슈를 만들지 않는다 (docs/DEVBOT.md 13절)."""
+    issues = _gh_json("issue", "list", "--state", "open", "--search", f"{JOURNAL_TITLE} in:title",
+                      "--json", "number,title")
+    return next((issue["number"] for issue in issues if issue["title"] == JOURNAL_TITLE), None)
+
+
+def journal_entry(today: date, task: Task | None, outcome: str, message: str, calls: int,
+                  pr_url: str | None = None, remembered: bool = False) -> str:
+    """일일 요약 (docs/DEVBOT.md 10절): 한 일, 실패한 일, 남긴 질문, 사용한 호출 수."""
+    result = {
+        "passed": f"PR {pr_url or '(미리 보기)'} ({message})",
+        "failed": "실패. 이슈에 마지막 에러를 남김",
+        "question": "질문을 남김",
+        "no_task": message,
+    }[outcome]
+    lines = [f"## {today.isoformat()}", ""]
+    if task:
+        lines.append(f"- 이슈: #{task.number} {task.title.removeprefix('[pypo]').strip()}")
+    lines += [f"- 결과: {result}", f"- LLM 호출: {calls}회"]
+    if remembered:
+        lines.append("- 기억: 이번 실패와 해결을 `agent/memory/mistakes.md`에 추가 (PR에 포함)")
+    return "\n".join(lines)
