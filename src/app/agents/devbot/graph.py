@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import operator
 import re
@@ -42,6 +43,7 @@ class DevbotState(TypedDict, total=False):
     attempts: int
     feedback: str
     reply: str
+    prompt: str
     checks: list[workspace.Check]
     outcome: Outcome
     message: str
@@ -61,6 +63,20 @@ def _prompt(repo: Path, name: str, **values: str) -> str:
 
 
 LOG_DIR = Path(tempfile.gettempdir()) / "pypo-logs"
+# 임시 폴더가 아니라 홈에 둔다. 재부팅해도 남아야 나중에 LoRA 학습 데이터로 쓴다.
+TRAJECTORIES = Path.home() / ".pypo" / "trajectories.jsonl"
+
+
+def save_trajectory(number: int, attempts: int, prompt: str, reply: str) -> None:
+    """검증을 통과한 (프롬프트, 응답) 한 쌍을 JSONL로 덧붙인다. `messages`는 OpenAI·MLX-LM의 chat 학습 형식이다."""
+    row = {
+        "issue": number,
+        "attempts": attempts,
+        "messages": [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}],
+    }
+    TRAJECTORIES.parent.mkdir(parents=True, exist_ok=True)
+    with TRAJECTORIES.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def model_for_attempt(model: BaseChatModel, attempts: int) -> BaseChatModel:
@@ -170,7 +186,7 @@ def build_graph(
             return _retry(state, "출력이 규칙을 어겼습니다:\n- " + "\n- ".join(problems))
 
         workspace.apply(root, contents)
-        return {"feedback": "", "reply": text}
+        return {"feedback": "", "reply": text, "prompt": prompt}
 
     def verify(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
@@ -186,6 +202,7 @@ def build_graph(
             return {**_retry(state, f"이슈가 요구한 테스트가 없습니다: {', '.join(missing)}. 이 이름으로 테스트를 만드세요."),
                     "checks": checks}
 
+        save_trajectory(state["task"].number, state["attempts"] + 1, state["prompt"], state["reply"])
         return {"outcome": "passed", "checks": checks, "message": f"{state['attempts'] + 1}번째 시도에서 통과"}
 
     def retrospect(state: DevbotState) -> DevbotState:

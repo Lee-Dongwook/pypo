@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import sys
@@ -9,11 +10,20 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_ollama import ChatOllama
 
 from src.app.agents.devbot import github, memory, workspace
+from src.app.agents.devbot import graph as devbot_graph
 from src.app.agents.devbot.graph import LOG_DIR, RETRY_TEMPERATURE, build_graph, model_for_attempt
 from src.app.agents.devbot.guards import MAX_ATTEMPTS, MAX_DIFF_LINES, branch_name, path_violations, removed_tests
 from src.app.agents.devbot.issue import parse_task
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def trajectories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """테스트가 홈의 실제 학습 데이터에 쓰지 않게 한다."""
+    path = tmp_path / "trajectories.jsonl"
+    monkeypatch.setattr(devbot_graph, "TRAJECTORIES", path)
+    return path
 
 BODY = """### 목표
 
@@ -503,3 +513,15 @@ def test_retry_prompt_shows_the_previous_reply_so_only_the_problem_is_fixed(tmp_
     prompt = (LOG_DIR / "issue1-try2.prompt.md").read_text(encoding="utf-8")
     assert "# 이전 출력\n\n형식 없는 답" in prompt
     assert "위 문제만 고쳐" in prompt
+
+
+def test_only_passing_work_is_saved_as_training_data(tmp_path: Path, trajectories: Path) -> None:
+    run(make_repo(tmp_path / "pass"), ["형식 없는 답", FIXED])
+    run(make_repo(tmp_path / "fail"), ["형식 없는 답"] * MAX_ATTEMPTS)
+
+    rows = [json.loads(line) for line in trajectories.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["attempts"] == 2
+    assert [m["role"] for m in rows[0]["messages"]] == ["user", "assistant"]
+    assert "# 이전 출력\n\n형식 없는 답" in rows[0]["messages"][0]["content"]
+    assert rows[0]["messages"][1]["content"] == FIXED
