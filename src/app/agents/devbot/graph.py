@@ -180,7 +180,7 @@ def build_graph(
         contents: dict[str, str] = {}
         if not problems:
             try:
-                contents = workspace.apply_edits(root, edits)
+                contents = workspace.apply_edits(root, edits, state["task"].files)
             except workspace.EditError as error:
                 problems.append(str(error))
 

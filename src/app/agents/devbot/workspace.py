@@ -310,21 +310,69 @@ def rewritten_definitions(root: Path, edits: list[Edit]) -> list[str]:
     return problems
 
 
-def apply_edits(root: Path, edits: list[Edit]) -> dict[str, str]:
-    """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`."""
+def apply_edits(root: Path, edits: list[Edit], importers: tuple[str, ...] = ()) -> dict[str, str]:
+    """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`.
+
+    MOVE가 있으면 `importers`(이슈에 지정된 파일) 중 옮긴 이름을 원래 파일에서 import하던 곳을 새 위치로 고친다.
+    IDE의 옮기기 리팩터링과 같다. 7B는 이 import를 자주 놓친다 (#3).
+    """
     contents: dict[str, str] = {}
+
+    def load(path: str) -> None:
+        if path not in contents:
+            file = root / path
+            contents[path] = file.read_text(encoding="utf-8") if file.exists() else ""
+
     for edit in edits:
         for path in (edit.path, edit.move_to):
-            if path and path not in contents:
-                file = root / path
-                contents[path] = file.read_text(encoding="utf-8") if file.exists() else ""
+            if path:
+                load(path)
         if edit.move_to:
             rest, code = _cut(contents[edit.path], edit)
             contents[edit.move_to] = _append(contents[edit.move_to], code)
             contents[edit.path] = _append(rest, _import_line(edit.path, edit.move_to, edit.delete))
         else:
             contents[edit.path] = _replace_once(contents[edit.path], edit)
+
+    for move in (edit for edit in edits if edit.move_to):
+        for path in importers:
+            if path.endswith(".py") and path not in (move.path, move.move_to) and (root / path).exists():
+                load(path)
+                contents[path] = _redirect_import(contents[path], path, move)
     return contents
+
+
+def _imports_from(node: ast.ImportFrom, importer: str, source: str) -> bool:
+    """`importer` 파일의 이 import가 `source` 파일을 가리키는지."""
+    source_path = Path(source).with_suffix("")
+    if node.level == 0:
+        return node.module == ".".join(source_path.parts)
+    base = Path(importer).parent
+    for _ in range(node.level - 1):
+        base = base.parent
+    return base / (node.module or "").replace(".", "/") == source_path
+
+
+def _redirect_import(text: str, path: str, move: Edit) -> str:
+    """`from <원래 파일> import ..., 이름, ...`에서 이름을 빼고 `from <새 파일> import 이름`을 넣는다."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+    for node in tree.body:
+        if not (isinstance(node, ast.ImportFrom) and _imports_from(node, path, move.path)):
+            continue
+        moved = [alias for alias in node.names if alias.name == move.delete]
+        if not moved:
+            continue
+        kept = [alias for alias in node.names if alias.name != move.delete]
+        names = ", ".join(f"{a.name} as {a.asname}" if a.asname else a.name for a in kept)
+        statement = f"from {'.' * node.level}{node.module or ''} import {names}\n" if kept else ""
+        lines = text.splitlines(keepends=True)
+        text = "".join(lines[: node.lineno - 1]) + statement + "".join(lines[node.end_lineno :])
+        alias = f" as {moved[0].asname}" if moved[0].asname else ""
+        return _append(text, _import_line(path, move.move_to, move.delete).replace("\n", f"{alias}\n"))
+    return text
 
 
 def reset(root: Path) -> None:

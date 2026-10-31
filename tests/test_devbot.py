@@ -613,3 +613,15 @@ def test_delete_plus_retyped_copy_elsewhere_moves_the_original_instead(tmp_path:
     assert "invented" not in contents["lib/models.py"]
     assert "from .shapes" not in contents["lib/models.py"]
     assert contents["lib/shapes.py"].startswith("from .models import Box\n")
+
+
+def test_move_also_fixes_imports_in_other_issue_files(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text("class Box:\n    width: int\n\n\ndef area():\n    pass\n", encoding="utf-8")
+    (tmp_path / "lib" / "models.py").write_text("class Circle:\n    r: int\n", encoding="utf-8")
+    (tmp_path / "lib" / "draw.py").write_text("from .shapes import (\n    Box,\n    area,\n)\n\nx = Box\n", encoding="utf-8")
+    edits = workspace.parse_edits("=== FILE: lib/shapes.py ===\nMOVE Box TO lib/models.py\n=== END ===")
+
+    contents = workspace.apply_edits(tmp_path, edits, ("lib/shapes.py", "lib/models.py", "lib/draw.py"))
+
+    assert contents["lib/draw.py"] == "from .shapes import area\nfrom .models import Box\n\nx = Box\n"
