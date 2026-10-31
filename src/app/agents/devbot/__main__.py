@@ -1,15 +1,20 @@
 """pypo 실행.
 
     uv run python -m src.app.agents.devbot day [--dry-run] [--issue N] [--base origin/main] [--keep]
+    uv run python -m src.app.agents.devbot eval
 
 통과하면 `pypo/*` 브랜치에 푸시하고 PR을 연다. 실패하거나 질문이 있으면 이슈에 코멘트와 라벨을 남긴다.
 `--dry-run`이면 GitHub에는 아무것도 쓰지 않고 결과와 변경 내용만 출력한다.
+`eval`은 `agent/evals/cases.json`의 지난 이슈를 그때 커밋에서 다시 풀어 본다. 하네스를 바꾼 뒤 퇴보했는지 본다.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
+import time
 from datetime import date
 from functools import partial
 from pathlib import Path
@@ -18,6 +23,7 @@ from src.app.engine.models import resolve_chat_model
 from src.app.shared.settings import settings
 
 from . import github, workspace
+from . import graph as devbot_graph
 from .graph import DevbotState, build_graph
 from .guards import MAX_OPEN_PRS, branch_name
 
@@ -64,9 +70,25 @@ def _journal(state: DevbotState, pr_url: str | None) -> None:
     print(f"[pypo] 일일 요약: #{number}")
 
 
+def _eval(model, python) -> None:
+    """GitHub에 아무것도 쓰지 않는다. 평가 답은 학습 데이터에 넣지 않는다 (같은 이슈가 여러 번 들어가면 치우친다)."""
+    devbot_graph.TRAJECTORIES = Path(os.devnull)
+    cases = json.loads((REPO / "agent" / "evals" / "cases.json").read_text(encoding="utf-8"))
+    passed = 0
+    for case in cases:
+        started = time.monotonic()
+        state = build_graph(model, REPO, python, base=case["base"]).invoke({"issue": case["issue"]})
+        if worktree := state.get("worktree"):
+            workspace.remove(REPO, Path(worktree))
+        passed += state["outcome"] == "passed"
+        print(f"[pypo] eval #{case['issue']} ({case['kind']}): {state['outcome']}, "
+              f"LLM {state.get('calls', 0)}회, {time.monotonic() - started:.0f}s")
+    print(f"[pypo] eval: {passed}/{len(cases)} 통과")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pypo")
-    parser.add_argument("command", choices=["day"])
+    parser.add_argument("command", choices=["day", "eval"])
     parser.add_argument("--dry-run", action="store_true", help="GitHub에 쓰지 않고 결과만 출력")
     parser.add_argument("--issue", type=int, help="이 이슈만 처리 (기본: bot-ready 중 가장 오래된 것)")
     parser.add_argument("--base", default="origin/main", help="작업을 시작할 커밋")
@@ -83,6 +105,8 @@ def main() -> None:
         raise SystemExit(f"[pypo] {error}") from error
     if not args.dry_run and len(waiting := github.open_pr_branches()) >= MAX_OPEN_PRS:
         raise SystemExit(f"[pypo] 리뷰를 기다리는 PR이 {len(waiting)}개라 새 작업을 시작하지 않습니다.")
+    if args.command == "eval":
+        return _eval(_model(args.model), partial(workspace.sandboxed_python, image))
     graph = build_graph(_model(args.model), REPO, partial(workspace.sandboxed_python, image), base=args.base)
     state = graph.invoke({"issue": args.issue})
 

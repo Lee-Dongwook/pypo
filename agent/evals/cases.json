@@ -1,0 +1,4 @@
+[
+  {"issue": 2, "base": "bf571c41e330988b70c15072bf30ae4ec3c9c55b", "kind": "테스트 추가"},
+  {"issue": 3, "base": "f096aac5ae315043f80fc0c275fc453d4d321ae1", "kind": "정의 옮기기 + import 고치기"}
+]

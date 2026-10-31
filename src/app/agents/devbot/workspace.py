@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +21,8 @@ from .guards import BRANCH_PREFIX, normalize
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
 _DELETE_LINE = re.compile(r"^DELETE (\w+)[ \t]*\n?", re.M)
 _MOVE_LINE = re.compile(r"^MOVE (\w+) TO (\S+)[ \t]*\n?", re.M)
+_RENAME_LINE = re.compile(r"^RENAME (\w+) TO (\w+)[ \t]*\n?", re.M)
+MAX_IMPORTERS = 30
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
 _OUTPUT_TAIL = 3000
 MAX_FILE_CHARS = 8000
@@ -144,7 +149,7 @@ class Edit:
     """파일 하나에 대한 찾아 바꾸기. `search`가 비어 있으면 파일 끝에 덧붙인다 (새 파일이면 새로 만든다).
 
     `delete`가 있으면 그 이름의 최상위 함수·클래스를 통째로 지운다. `move_to`도 있으면 지운 정의를 그 파일 끝에
-    붙이고, 원래 파일에는 새 위치에서 가져오는 import를 남긴다.
+    붙이고, 원래 파일에는 새 위치에서 가져오는 import를 남긴다. `rename_to`가 있으면 지우지 않고 이름만 바꾼다.
     """
 
     path: str
@@ -152,6 +157,7 @@ class Edit:
     replace: str
     delete: str = ""
     move_to: str = ""
+    rename_to: str = ""
 
 
 class EditError(ValueError):
@@ -162,7 +168,7 @@ def parse_edits(text: str) -> list[Edit]:
     """모델 출력에서 `=== FILE ===` 블록을 꺼낸다. 블록 밖 글은 무시한다.
 
     SEARCH/REPLACE 표시가 있으면 찾아 바꾸기, 없으면 블록 안 코드 전체를 덧붙이기(새 파일이면 만들기)로 본다.
-    `DELETE 이름` 줄은 정의 지우기, `MOVE 이름 TO 경로` 줄은 정의 옮기기다. 7B 모델은 큰 정의를 그대로 베끼지 못해서
+    `DELETE 이름` 줄은 정의 지우기, `MOVE 이름 TO 경로` 줄은 정의 옮기기, `RENAME 이름 TO 새이름` 줄은 이름 바꾸기다. 7B 모델은 큰 정의를 그대로 베끼지 못해서
     이름만 받고 코드는 pypo가 옮긴다.
     7B 모델은 덧붙일 코드를 ```로 감싸서 내는 쪽을 훨씬 잘 지킨다. 모델이 쓴 줄 끝 공백은 지운다.
     """
@@ -170,7 +176,8 @@ def parse_edits(text: str) -> list[Edit]:
     for path, body in _FILE_BLOCK.findall(text):
         edits += [Edit(path, "", "", name, normalize(target)) for name, target in _MOVE_LINE.findall(body)]
         edits += [Edit(path, "", "", name) for name in _DELETE_LINE.findall(body)]
-        body = _DELETE_LINE.sub("", _MOVE_LINE.sub("", body))
+        edits += [Edit(path, "", "", old, rename_to=new) for old, new in _RENAME_LINE.findall(body)]
+        body = _RENAME_LINE.sub("", _DELETE_LINE.sub("", _MOVE_LINE.sub("", body)))
         if blocks := _EDIT_BLOCK.findall(body):
             edits += [Edit(path, search, _strip_trailing(replace)) for search, replace in blocks]
         elif code := _unfence(body).strip("\n"):
@@ -184,7 +191,7 @@ def _deletes_retyped_elsewhere_are_moves(edits: list[Edit]) -> list[Edit]:
     7B 모델은 옮기기를 늘 이렇게 하고, 다시 친 코드에 없던 검증을 지어 넣기도 한다 (#3).
     그래서 다시 친 정의는 버리고 원본을 MOVE로 옮긴다. 다시 친 블록에 함께 쓴 import도 버린다 (순환 import를 만들곤 한다).
     """
-    deleted = {edit.delete: edit.path for edit in edits if edit.delete and not edit.move_to}
+    deleted = {edit.delete: edit.path for edit in edits if edit.delete and not (edit.move_to or edit.rename_to)}
     targets: dict[str, str] = {}
     result: list[Edit] = []
     for edit in edits:
@@ -203,8 +210,8 @@ def _deletes_retyped_elsewhere_are_moves(edits: list[Edit]) -> list[Edit]:
             not isinstance(node, ast.Import | ast.ImportFrom) for node in ast.parse(rest).body
         ):
             result.append(Edit(edit.path, "", rest))
-    return [Edit(e.path, "", "", e.delete, targets[e.delete]) if e.delete in targets and not e.move_to else e
-            for e in result]
+    return [Edit(e.path, "", "", e.delete, targets[e.delete]) if e.delete in targets and not (e.move_to or e.rename_to)
+            else e for e in result]
 
 
 def _strip_trailing(code: str) -> str:
@@ -314,7 +321,8 @@ def apply_edits(root: Path, edits: list[Edit], importers: tuple[str, ...] = ()) 
     """찾아 바꾸기를 순서대로 적용한 파일별 새 내용. 하나라도 안 맞으면 `EditError`.
 
     MOVE가 있으면 `importers`(이슈에 지정된 파일) 중 옮긴 이름을 원래 파일에서 import하던 곳을 새 위치로 고친다.
-    IDE의 옮기기 리팩터링과 같다. 7B는 이 import를 자주 놓친다 (#3).
+    IDE의 옮기기 리팩터링과 같다. 7B는 이 import를 자주 놓친다 (#3). RENAME도 같은 파일들에서 이름을 바꾼다.
+    이름 바꾸기는 맨 나중에 한다. 모델은 SEARCH를 원래 이름으로 쓰기 때문이다.
     """
     contents: dict[str, str] = {}
 
@@ -323,6 +331,7 @@ def apply_edits(root: Path, edits: list[Edit], importers: tuple[str, ...] = ()) 
             file = root / path
             contents[path] = file.read_text(encoding="utf-8") if file.exists() else ""
 
+    edits = sorted(edits, key=lambda edit: bool(edit.rename_to))
     for edit in edits:
         for path in (edit.path, edit.move_to):
             if path:
@@ -331,15 +340,50 @@ def apply_edits(root: Path, edits: list[Edit], importers: tuple[str, ...] = ()) 
             rest, code = _cut(contents[edit.path], edit)
             contents[edit.move_to] = _append(contents[edit.move_to], code)
             contents[edit.path] = _append(rest, _import_line(edit.path, edit.move_to, edit.delete))
+        elif edit.rename_to:
+            _cut(contents[edit.path], edit)  # 바꿀 정의가 정확히 하나인지 확인한다.
+            if edit.rename_to in _top_level_names(contents[edit.path]):
+                raise EditError(f"{edit.path}: {edit.rename_to}가 이미 있어 {edit.delete}의 이름을 바꿀 수 없음")
+            contents[edit.path] = _rename(contents[edit.path], edit.delete, edit.rename_to)
         else:
             contents[edit.path] = _replace_once(contents[edit.path], edit)
 
-    for move in (edit for edit in edits if edit.move_to):
+    for change in (edit for edit in edits if edit.move_to or edit.rename_to):
         for path in importers:
-            if path.endswith(".py") and path not in (move.path, move.move_to) and (root / path).exists():
+            if path.endswith(".py") and path not in (change.path, change.move_to) and (root / path).exists():
                 load(path)
-                contents[path] = _redirect_import(contents[path], path, move)
+                if change.move_to:
+                    contents[path] = _redirect_import(contents[path], path, change)
+                elif _imports_name(contents[path], path, change):
+                    contents[path] = _rename(contents[path], change.delete, change.rename_to)
     return contents
+
+
+def _rename(text: str, old: str, new: str) -> str:
+    """코드의 이름 토큰만 바꾼다. 문자열과 주석 안의 같은 글자는 그대로 둔다."""
+    lines = text.splitlines(keepends=True)
+    try:
+        tokens = [t for t in tokenize.generate_tokens(io.StringIO(text).readline) if t.string == old]
+    except (tokenize.TokenError, SyntaxError) as error:
+        raise EditError(f"문법 오류가 있어 {old}의 이름을 바꿀 수 없음 ({error})") from error
+    for token in reversed(tokens):
+        if token.type == tokenize.NAME:
+            row, col = token.start
+            lines[row - 1] = lines[row - 1][:col] + new + lines[row - 1][col + len(old) :]
+    return "".join(lines)
+
+
+def _imports_name(text: str, path: str, edit: Edit) -> bool:
+    """`path` 파일이 `edit.path`에서 `edit.delete`를 import하는지."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, ast.ImportFrom) and _imports_from(node, path, edit.path)
+        and any(alias.name == edit.delete for alias in node.names)
+        for node in ast.walk(tree)
+    )
 
 
 def _imports_from(node: ast.ImportFrom, importer: str, source: str) -> bool:
@@ -393,7 +437,81 @@ def apply(root: Path, edits: dict[str, str]) -> None:
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(content, encoding="utf-8")
     if python := [path for path in edits if path.endswith(".py")]:
+        import_undefined(root, python)
         _run([sys.executable, "-m", "ruff", "check", "--fix", "--quiet", *python], root)
+
+
+def _definitions(root: Path) -> dict[str, list[str]]:
+    """`src/`의 최상위 함수·클래스 이름별로 정의한 파일들."""
+    found: dict[str, list[str]] = {}
+    for file in sorted((root / "src").rglob("*.py")):
+        for name in _top_level_names(file.read_text(encoding="utf-8")):
+            found.setdefault(name, []).append(file.relative_to(root).as_posix())
+    return found
+
+
+def import_undefined(root: Path, paths: list[str]) -> None:
+    """정의되지 않은 이름(F821)이 `src/`의 딱 한 파일에 정의돼 있으면 그 import를 넣는다. 7B는 import를 자주 빠뜨린다."""
+    result = _run([sys.executable, "-m", "ruff", "check", "--select", "F821", "--output-format", "json", *paths], root)
+    missing: dict[str, set[str]] = {}
+    for item in json.loads(result.stdout or "[]"):
+        if name := re.search(r"`(\w+)`", item["message"]):
+            path = Path(item["filename"]).resolve().relative_to(root.resolve()).as_posix()
+            missing.setdefault(path, set()).add(name[1])
+    defs = _definitions(root) if missing else {}
+    for path, names in missing.items():
+        lines = [_import_line(path, defs[name][0], name) for name in sorted(names)
+                 if len(defs.get(name, [])) == 1 and defs[name][0] != path]
+        if lines:
+            file = root / path
+            file.write_text(_append(file.read_text(encoding="utf-8"), "".join(lines)), encoding="utf-8")
+
+
+def importers(root: Path, targets: tuple[str, ...]) -> str:
+    """수정할 파일에서 이름을 import하는 곳. 옮기거나 이름을 바꾸면 함께 고쳐야 하는 줄이다."""
+    sources = [target for target in targets if target.endswith(".py")]
+    found = []
+    for file in sorted([*(root / "src").rglob("*.py"), *(root / "tests").rglob("*.py")]):
+        path = file.relative_to(root).as_posix()
+        text = file.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        found += [
+            f"{path}:{node.lineno}: {ast.get_source_segment(text, node)}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and any(_imports_from(node, path, s) for s in sources if s != path)
+        ]
+    # ponytail: 많이 쓰이는 모듈(settings 등)이면 앞쪽만 보인다. 잘려서 문제가 되면 이슈가 언급한 이름으로 거른다.
+    return "\n".join(found[:MAX_IMPORTERS])
+
+
+def explain(root: Path, output: str) -> list[str]:
+    """자주 나오는 에러를 7B가 바로 따를 수 있는 한 줄 지시로 바꾼다. 모르는 에러는 빈 목록."""
+    defs: dict[str, list[str]] = {}
+
+    def where(name: str) -> str:
+        if not defs:
+            defs.update(_definitions(root))
+        if paths := defs.get(name):
+            return f"`{name}`는 {', '.join(paths)}에 있으니 거기서 import한다"
+        return f"`{name}`를 직접 정의하거나 정의된 모듈에서 import한다"
+
+    hints = [f"{path}:{line}: `{name}`가 정의되지 않았다. {where(name)}"
+             for path, line, name in re.findall(r"^(\S+?):(\d+):\d+: F821 Undefined name `(\w+)`", output, re.M)]
+    hints += [f"{path}:{line}: `{name}`를 {first}번째 줄에 이어 또 정의했다. 하나만 남긴다. 다른 파일로 옮기는 거면 MOVE를 쓴다"
+              for path, line, name, first in re.findall(
+                  r"^(\S+?):(\d+):\d+: F811 (?:\[\*\] )?Redefinition of unused `(\w+)` from line (\d+)", output, re.M)]
+    for name, partial, module in re.findall(r"cannot import name '(\w+)' from (partially initialized module )?'([\w.]+)'",
+                                            output):
+        if partial:
+            hints.append(f"순환 import: `{module}`와 그 모듈이 서로를 import한다. 한쪽의 import를 없앤다")
+        else:
+            hints.append(f"`{module}`에는 `{name}`가 없다. {where(name)}")
+    hints += [f"`{module}` 모듈이 없다. 저장소에 있는 파일 경로로 import한다"
+              for module in re.findall(r"No module named '([\w.]+)'", output)]
+    return list(dict.fromkeys(hints))
 
 
 def diff(root: Path) -> str:
@@ -478,7 +596,7 @@ def run_checks(root: Path, python: list[str]) -> list[Check]:
     # ponytail: 웹(apps/, packages/)을 건드리는 이슈는 worktree에 node_modules가 없어 typecheck를 못 돌린다. M2 전에 해결.
     checks = []
     for name, args in [
-        ("ruff", ["-m", "ruff", "check", "."]),
+        ("ruff", ["-m", "ruff", "check", "--output-format", "concise", "."]),
         ("pytest", ["-m", "pytest", "-q", "-p", "no:cacheprovider"]),
     ]:
         result = _run([*python, *args], root)

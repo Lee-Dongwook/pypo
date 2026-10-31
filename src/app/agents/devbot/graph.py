@@ -144,6 +144,7 @@ def build_graph(
                 "title": task.title,
                 "body": task.body,
                 "references": workspace.reference_snippets(root, task.files, task.body) or "(없음)",
+                "importers": workspace.importers(root, task.files) or "(없음)",
                 "files": "\n\n".join(
                     f"--- {p} ---\n{workspace.file_content(root, p, task.body)}" for p in task.files
                 ),
@@ -203,7 +204,7 @@ def build_graph(
         checks = workspace.run_checks(root, python(root))
         failed = [check for check in checks if not check.ok]
         if failed:
-            details = "\n\n".join(f"## {check.name}\n{check.output}" for check in failed)
+            details = "\n\n".join(f"## {check.name}\n{_explained(root, check.output)}" for check in failed)
             return {**_retry(state, f"검증에 실패했습니다.\n\n{details}"), "checks": checks}
 
         if too_big := diff_line_violations(workspace.diff(root)):
@@ -228,6 +229,12 @@ def build_graph(
         if not memory.remember(root, task.number, lesson):
             return {"calls": 1, "history": ["회고: 이미 있는 내용이라 덧붙이지 않음"]}
         return {"calls": 1, "remembered": True, "history": [f"회고: {memory.MISTAKES}에 추가 ({lesson[2]})"]}
+
+    def _explained(root: Path, output: str) -> str:
+        """아는 에러는 한 줄 지시를 앞에 두고 원문은 끝부분만 남긴다. 7B는 긴 트레이스백에서 원인을 못 찾는다."""
+        if not (hints := workspace.explain(root, output)):
+            return output
+        return "\n".join(f"- {hint}" for hint in hints) + f"\n\n원문 끝부분:\n{output[-800:]}"
 
     def _retry(state: DevbotState, feedback: str) -> DevbotState:
         attempts = state["attempts"] + 1

@@ -639,3 +639,60 @@ def test_move_also_fixes_imports_in_other_issue_files(tmp_path: Path) -> None:
     contents = workspace.apply_edits(tmp_path, edits, ("lib/shapes.py", "lib/models.py", "lib/draw.py"))
 
     assert contents["lib/draw.py"] == "from .shapes import area\nfrom .models import Box\n\nx = Box\n"
+
+
+def test_rename_line_renames_a_definition_and_its_uses_in_issue_files_but_not_strings(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text('def area():\n    return "area"\n\n\nx = area()  # area\n')
+    (tmp_path / "lib" / "draw.py").write_text("from .shapes import area\n\ny = area()\n")
+    reply = (
+        "=== FILE: lib/shapes.py ===\nRENAME area TO surface\n"
+        "<<<<<<< SEARCH\nx = area()  # area\n=======\nx = area() + 1  # area\n>>>>>>> REPLACE\n=== END ==="
+    )
+
+    contents = workspace.apply_edits(tmp_path, workspace.parse_edits(reply), ("lib/shapes.py", "lib/draw.py"))
+
+    assert contents["lib/shapes.py"] == 'def surface():\n    return "area"\n\n\nx = surface() + 1  # area\n'
+    assert contents["lib/draw.py"] == "from .shapes import surface\n\ny = surface()\n"
+
+
+def test_renaming_onto_an_existing_name_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text("def area():\n    pass\n\n\ndef size():\n    pass\n")
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nRENAME area TO size\n=== END ===")
+
+    with pytest.raises(workspace.EditError, match="size"):
+        workspace.apply_edits(tmp_path, edits)
+
+
+def test_missing_import_of_a_name_defined_once_in_src_is_added(tmp_path: Path) -> None:
+    (tmp_path / "src" / "app").mkdir(parents=True)
+    (tmp_path / "src" / "app" / "schemas.py").write_text("class Card:\n    pass\n")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True)
+
+    workspace.apply(tmp_path, {"tests/test_card.py": "def test_card():\n    assert Card and Unknown\n"})
+
+    assert (tmp_path / "tests" / "test_card.py").read_text().startswith("from src.app.schemas import Card\n")
+
+
+def test_common_errors_become_one_line_instructions_that_say_where_the_name_lives(tmp_path: Path) -> None:
+    (tmp_path / "src" / "app").mkdir(parents=True)
+    (tmp_path / "src" / "app" / "schemas.py").write_text("class Card:\n    pass\n")
+
+    assert workspace.explain(tmp_path, "E   ImportError: cannot import name 'Card' from 'src.app.calc' (/w/calc.py)") == [
+        "`src.app.calc`에는 `Card`가 없다. `Card`는 src/app/schemas.py에 있으니 거기서 import한다"
+    ]
+    assert "MOVE" in workspace.explain(tmp_path, "a.py:9:5: F811 [*] Redefinition of unused `Card` from line 2")[0]
+    assert workspace.explain(tmp_path, "AssertionError: 1 != 2") == []
+
+
+def test_files_importing_the_issue_files_are_shown_to_the_model(tmp_path: Path) -> None:
+    (tmp_path / "src" / "card").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "card" / "calc.py").write_text("def evaluate():\n    pass\n")
+    (tmp_path / "src" / "card" / "api.py").write_text("from .calc import evaluate\n")
+    (tmp_path / "tests" / "test_calc.py").write_text("from src.card.calc import evaluate\n")
+
+    assert workspace.importers(tmp_path, ("src/card/calc.py",)) == (
+        "src/card/api.py:1: from .calc import evaluate\ntests/test_calc.py:1: from src.card.calc import evaluate"
+    )
