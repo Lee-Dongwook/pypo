@@ -27,6 +27,7 @@ from .issue import Task, parse_task
 logger = logging.getLogger(__name__)
 
 _FENCE = re.compile(r"^```[\w-]*\n|\n?```\s*$", re.M)
+RETRY_TEMPERATURE = 0.6
 
 Outcome = Literal["passed", "question", "failed", "no_task"]
 IssueSource = Callable[[int | None], list[dict[str, Any]]]
@@ -59,6 +60,13 @@ def _prompt(repo: Path, name: str, **values: str) -> str:
 
 
 LOG_DIR = Path(tempfile.gettempdir()) / "pypo-logs"
+
+
+def model_for_attempt(model: BaseChatModel, attempts: int) -> BaseChatModel:
+    """첫 시도는 온도 0, 재시도는 온도를 올린다. 온도 0이면 피드백을 줘도 같은 오답이 되풀이되기 쉽다."""
+    if attempts == 0 or "temperature" not in type(model).model_fields:
+        return model
+    return model.model_copy(update={"temperature": RETRY_TEMPERATURE})
 
 
 def _ask(model: BaseChatModel, prompt: str, step: str) -> str:
@@ -126,7 +134,8 @@ def build_graph(
     def _implement(state: DevbotState) -> DevbotState:
         root = Path(state["worktree"])
         prompt = _prompt(repo, "implement", feedback=state["feedback"], **state["context"])
-        text = _ask(model, prompt, f"issue{state['task'].number}-try{state['attempts'] + 1}")
+        attempt_model = model_for_attempt(model, state["attempts"])
+        text = _ask(attempt_model, prompt, f"issue{state['task'].number}-try{state['attempts'] + 1}")
         edits = workspace.parse_edits(text)
         # 짧은 질문만 질문으로 받는다. 작은 모델은 계획이나 코드 앞에도 QUESTION을 붙이곤 하는데, 그건 형식 오류다.
         question = _FENCE.sub("", text).strip()

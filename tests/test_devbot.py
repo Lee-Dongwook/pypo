@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_ollama import ChatOllama
 
 from src.app.agents.devbot import github, memory, workspace
-from src.app.agents.devbot.graph import LOG_DIR, build_graph
+from src.app.agents.devbot.graph import LOG_DIR, RETRY_TEMPERATURE, build_graph, model_for_attempt
 from src.app.agents.devbot.guards import MAX_ATTEMPTS, MAX_DIFF_LINES, branch_name, path_violations, removed_tests
 from src.app.agents.devbot.issue import parse_task
 
@@ -475,3 +476,22 @@ def test_journal_entry_reports_result_and_calls() -> None:
         "- LLM 호출: 3회",
     ]
     assert "mistakes.md" in entry
+
+
+def test_ruff_check_fixes_unused_imports_instead_of_failing(tmp_path: Path) -> None:
+    (tmp_path / "calc.py").write_text("import os\n\n\ndef add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    ruff = workspace.run_checks(tmp_path, [sys.executable])[0]
+
+    assert ruff.ok, ruff.output
+    assert "import os" not in (tmp_path / "calc.py").read_text(encoding="utf-8")
+
+
+def test_retries_sample_with_higher_temperature_but_first_try_stays_deterministic() -> None:
+    model = ChatOllama(model="qwen2.5-coder:7b", temperature=0, num_ctx=12288)
+
+    assert model_for_attempt(model, 0) is model
+    retry = model_for_attempt(model, 1)
+    assert retry.temperature == RETRY_TEMPERATURE
+    assert retry.num_ctx == 12288
+    assert model.temperature == 0
