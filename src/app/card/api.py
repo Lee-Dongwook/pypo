@@ -77,6 +77,9 @@ def optimize_purchase(request: OptimizePurchaseRequest) -> OptimizePurchaseRespo
     catalog = load_catalog()
     _require_known(catalog, set(request.spends) | set(request.remaining_caps))
 
+    if not request.spends:
+        raise HTTPException(status_code=400, detail="실적을 입력한 카드가 하나 이상 필요합니다")
+
     evaluations = [
         evaluate_single_purchase(
             card=catalog.find(card_id),
@@ -108,6 +111,10 @@ class TierAnalysisResponse(BaseModel):
 def analyze_tiers(request: TierAnalysisRequest) -> TierAnalysisResponse:
     catalog = load_catalog()
     _require_known(catalog, set(request.spends))
+
+    if not request.spends:
+        raise HTTPException(status_code=400, detail="실적을 입력한 카드가 하나 이상 필요합니다")
+
     return TierAnalysisResponse(
         analyses=[analyze_card_tier(catalog.find(card_id), spend) for card_id, spend in request.spends.items()]
     )
