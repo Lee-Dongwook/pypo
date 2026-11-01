@@ -21,7 +21,7 @@ from .guards import BRANCH_PREFIX, normalize
 _FILE_BLOCK = re.compile(r"^=== FILE: (\S+) ===\n(.*?)^=== END ===", re.S | re.M)
 _DELETE_LINE = re.compile(r"^DELETE (\w+)[ \t]*\n?", re.M)
 _MOVE_LINE = re.compile(r"^MOVE (\w+) TO (\S+)[ \t]*\n?", re.M)
-_RENAME_LINE = re.compile(r"^RENAME (\w+) TO (\w+)[ \t]*\n?", re.M)
+_RENAME_LINE = re.compile(r"^(?:RENAME (\w+) TO|SEARCH/REPLACE (\w+) ->) (\w+)[ \t]*\n?", re.M)
 _ADD_PREFIX = re.compile(r"^ADD[ \t]+", re.M)
 MAX_IMPORTERS = 30
 _EDIT_BLOCK = re.compile(r"^<<<<<<< SEARCH\n(.*?)^=======\n(.*?)^>>>>>>> REPLACE", re.S | re.M)
@@ -177,7 +177,8 @@ def parse_edits(text: str) -> list[Edit]:
     for path, body in _FILE_BLOCK.findall(text):
         edits += [Edit(path, "", "", name, normalize(target)) for name, target in _MOVE_LINE.findall(body)]
         edits += [Edit(path, "", "", name) for name in _DELETE_LINE.findall(body)]
-        edits += [Edit(path, "", "", old, rename_to=new) for old, new in _RENAME_LINE.findall(body)]
+        # 7B는 이름 바꾸기를 `SEARCH/REPLACE 옛이름 -> 새이름` 한 줄로 지어내기도 한다 (903 평가).
+        edits += [Edit(path, "", "", old or made_up, rename_to=new) for old, made_up, new in _RENAME_LINE.findall(body)]
         body = _RENAME_LINE.sub("", _DELETE_LINE.sub("", _MOVE_LINE.sub("", body)))
         body = _ADD_PREFIX.sub("", body)  # 7B는 덧붙이기에 없는 동사 `ADD`를 붙이곤 한다 (#3 평가).
         if blocks := _EDIT_BLOCK.findall(body):
@@ -225,14 +226,19 @@ def _unfence(body: str) -> str:
 
 
 def _append(text: str, addition: str) -> str:
-    """파일 끝에 덧붙인다. 덧붙일 코드 맨 위의 import 줄은 파일의 import 영역 바로 뒤로 옮긴다."""
+    """파일 끝에 덧붙인다. 덧붙일 코드 맨 위의 import 줄은 파일의 import 영역 바로 뒤로 옮긴다.
+
+    파일에 이미 있는 import 줄은 버리고, 이미 있는 함수·클래스를 다시 쓴 것은 제자리에서 바꾼다.
+    7B는 함수 하나를 고치면서 파일 전체를 다시 쓰곤 한다 (901).
+    """
+    existing = {line.strip() for line in text.splitlines()}
     lines = addition.splitlines(keepends=True)
     imports: list[str] = []
     while lines and (lines[0].startswith(("import ", "from ")) or not lines[0].strip()):
         line = lines.pop(0)
-        if line.strip():
+        if line.strip() and line.strip() not in existing:
             imports.append(line)
-    body = "".join(lines).lstrip("\n")
+    text, body = _replace_definitions(text, "".join(lines).lstrip("\n"))
     if not text.strip():
         return "".join(imports) + ("\n\n" if imports and body else "") + body
 
@@ -247,6 +253,37 @@ def _append(text: str, addition: str) -> str:
     return text.rstrip("\n") + ("\n\n\n" + body if body.strip() else "\n")
 
 
+def _start(node: ast.stmt) -> int:
+    """데코레이터까지 포함한 정의의 첫 줄 (0부터)."""
+    return min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))]) - 1
+
+
+def _replace_definitions(text: str, body: str) -> tuple[str, str]:
+    """`body`가 `text`에 이미 있는 최상위 함수·클래스를 다시 쓰면 그 정의를 제자리에서 바꾸고, 남은 코드를 돌려준다.
+
+    다시 쓴 정의가 하나도 없으면 그대로 돌려준다. 있으면 파일에 이미 있는 다른 문장(상수 등)도 남은 코드에서 뺀다.
+    """
+    kinds = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    try:
+        new, old = ast.parse(body).body, ast.parse(text).body
+    except SyntaxError:
+        return text, body
+    old_defs = {node.name: node for node in old if isinstance(node, kinds)}
+    pairs = [(old_defs[node.name], node) for node in new if isinstance(node, kinds) and node.name in old_defs]
+    if not pairs:
+        return text, body
+    text_lines, body_lines = text.splitlines(keepends=True), body.splitlines(keepends=True)
+    for before, after in sorted(pairs, key=lambda pair: pair[0].lineno, reverse=True):
+        text_lines[_start(before) : before.end_lineno] = body_lines[_start(after) : after.end_lineno]
+    text = "".join(text_lines)
+    rest = [
+        "".join(body_lines[_start(node) : node.end_lineno])
+        for node in new
+        if not (isinstance(node, kinds) and node.name in old_defs) and ast.get_source_segment(body, node) not in text
+    ]
+    return text, "\n\n".join(rest)
+
+
 def _cut(text: str, edit: Edit) -> tuple[str, str]:
     """이름이 `edit.delete`인 최상위 함수·클래스를 잘라 (남은 내용, 잘라 낸 코드)로 돌려준다."""
     try:
@@ -258,7 +295,7 @@ def _cut(text: str, edit: Edit) -> tuple[str, str]:
     if len(nodes) != 1:
         raise EditError(f"{edit.path}: 지울 최상위 함수·클래스 {edit.delete}가 {len(nodes)}개 있음. 정확한 이름을 쓸 것")
     node = nodes[0]
-    start = min([node.lineno, *(d.lineno for d in node.decorator_list)]) - 1
+    start = _start(node)
     lines = text.splitlines(keepends=True)
     rest = re.sub(r"\n{4,}", "\n\n\n", "".join(lines[:start] + lines[node.end_lineno :]))
     return rest, "".join(lines[start : node.end_lineno])
@@ -305,13 +342,19 @@ def _top_level_names(code: str) -> set[str]:
 
 
 def rewritten_definitions(root: Path, edits: list[Edit]) -> list[str]:
-    """덧붙이기 블록이 파일에 이미 있는 함수·클래스를 다시 쓴 경우. 7B는 옮기기를 파일 통째로 다시 쓰기로 착각한다."""
+    """덧붙이기 블록이 파일에 이미 있는 함수·클래스를 다시 쓰면서 다른 파일 블록에도 같은 이름을 쓴 경우.
+
+    7B는 옮기기를 두 파일 통째로 다시 쓰기로 착각한다 (#3). 한 파일 안에서만 다시 쓴 것은 제자리 바꾸기로 받는다.
+    """
+    appends = [edit for edit in edits if not (edit.search or edit.delete)]
     problems = []
-    for edit in edits:
+    for edit in appends:
         file = root / edit.path
-        if edit.search or edit.delete or not file.exists():
+        if not file.exists():
             continue
-        if again := sorted(_top_level_names(edit.replace) & _top_level_names(file.read_text(encoding="utf-8"))):
+        elsewhere = set().union(*(_top_level_names(e.replace) for e in appends if e.path != edit.path))
+        names = _top_level_names(edit.replace) & _top_level_names(file.read_text(encoding="utf-8")) & elsewhere
+        if again := sorted(names):
             problems.append(
                 f"{edit.path}: 이미 있는 {', '.join(again)}를 다시 씀. 덧붙이기에는 새 코드만 쓴다. "
                 "정의를 다른 파일로 옮길 때는 원래 파일 블록에 `MOVE 이름 TO <새 경로>` 한 줄만 쓴다"
@@ -342,6 +385,11 @@ def apply_edits(root: Path, edits: list[Edit], importers: tuple[str, ...] = ()) 
             rest, code = _cut(contents[edit.path], edit)
             contents[edit.move_to] = _append(contents[edit.move_to], code)
             contents[edit.path] = _append(rest, _import_line(edit.path, edit.move_to, edit.delete))
+        elif edit.rename_to and edit.delete not in _top_level_names(contents[edit.path]) and re.search(
+            rf"\b{edit.delete}\b", contents[edit.path]
+        ):
+            # 정의는 없고 쓰기만 하는 파일이면 쓰는 곳만 바꾼다.
+            contents[edit.path] = _rename(contents[edit.path], edit.delete, edit.rename_to)
         elif edit.rename_to:
             _cut(contents[edit.path], edit)  # 바꿀 정의가 정확히 하나인지 확인한다.
             if edit.rename_to in _top_level_names(contents[edit.path]):

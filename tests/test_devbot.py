@@ -600,15 +600,36 @@ def test_move_line_cuts_a_definition_into_another_file_and_leaves_an_import(tmp_
     assert contents["lib/models.py"].endswith("class Circle:\n    r: int\n\n\nclass Box:\n    width: int\n")
 
 
-def test_rewriting_existing_definitions_is_rejected_with_a_move_hint(tmp_path: Path) -> None:
+def test_rewriting_a_definition_and_typing_it_into_another_file_is_rejected_with_a_move_hint(tmp_path: Path) -> None:
     (tmp_path / "shapes.py").write_text("class Box:\n    width: int\n", encoding="utf-8")
-    edits = workspace.parse_edits("=== FILE: shapes.py ===\nclass Box:\n    width: int\n\n\nclass New:\n    pass\n=== END ===")
+    edits = workspace.parse_edits(
+        "=== FILE: shapes.py ===\nclass Box:\n    width: int\n\n\nclass New:\n    pass\n=== END ===\n"
+        "=== FILE: models.py ===\nclass Box:\n    width: int\n=== END ==="
+    )
 
     problems = workspace.rewritten_definitions(tmp_path, edits)
 
     assert len(problems) == 1
     assert "Box" in problems[0] and "MOVE" in problems[0]
     assert "New" not in problems[0]
+
+
+def test_rewritten_whole_file_replaces_only_the_changed_definitions_in_place(tmp_path: Path) -> None:
+    original = (
+        "from __future__ import annotations\n\nfrom decimal import Decimal\n\nLIMIT = 3\n\n\n"
+        "def helper() -> int:\n    return 1\n\n\ndef cap(a: int, b: int) -> int:\n    return max(a, b)\n\n\n"
+        "def tail() -> Decimal:\n    return Decimal(LIMIT)\n"
+    )
+    (tmp_path / "calc.py").write_text(original, encoding="utf-8")
+    reply = (
+        "=== FILE: calc.py ===\n```python\nfrom __future__ import annotations\nfrom decimal import Decimal\n\n"
+        "LIMIT = 3\n\n\ndef helper() -> int:\n    return 1\n\n\ndef cap(a: int, b: int) -> int:\n    return min(a, b)\n"
+        "```\n=== END ==="
+    )
+    edits = workspace.parse_edits(reply)
+
+    assert workspace.rewritten_definitions(tmp_path, edits) == []
+    assert workspace.apply_edits(tmp_path, edits) == {"calc.py": original.replace("max(a, b)", "min(a, b)")}
 
 
 def test_delete_plus_retyped_copy_elsewhere_moves_the_original_instead(tmp_path: Path) -> None:
@@ -702,3 +723,20 @@ def test_made_up_add_verb_is_read_as_a_plain_append() -> None:
     edits = workspace.parse_edits("=== FILE: a.py ===\nADD from b import c\n\nx = c\n=== END ===")
 
     assert edits == [workspace.Edit("a.py", "", "from b import c\n\nx = c\n")]
+
+
+def test_made_up_search_replace_arrow_line_renames_usages_in_that_file(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "calc.py").write_text("def rank_old():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "lib" / "api.py").write_text("from .calc import rank_old\n\nx = rank_old()\n", encoding="utf-8")
+    reply = (
+        "=== FILE: lib/calc.py ===\nRENAME rank_old TO rank_new\n=== END ===\n\n"
+        "=== FILE: lib/api.py ===\nSEARCH/REPLACE rank_old -> rank_new\n=== END ==="
+    )
+
+    contents = workspace.apply_edits(tmp_path, workspace.parse_edits(reply), ("lib/calc.py", "lib/api.py"))
+
+    assert contents == {
+        "lib/calc.py": "def rank_new():\n    return 1\n",
+        "lib/api.py": "from .calc import rank_new\n\nx = rank_new()\n",
+    }
