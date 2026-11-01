@@ -268,3 +268,21 @@ def test_purchase_evaluation_lives_in_schemas_and_api_imports_it_from_there() ->
     assert "class PurchaseEvaluation" not in inspect.getsource(calculator)
     assert "pydantic" not in from_imports(calculator)
     assert "PurchaseEvaluation" in from_imports(api).get("schemas", set())
+
+
+def test_one_won_below_threshold_stays_in_the_lower_tier():
+    card = make_card()
+    advice = evaluate_card(card, 299_999)
+    assert advice.current_benefit == 0
+    assert advice.gap == 1
+    assert advice.incremental_gain == 15_000
+    assert advice.action == "fill"
+
+
+def test_one_won_below_top_tier_still_has_a_gap():
+    card = make_card()
+    advice = evaluate_card(card, 999_999)
+    assert advice.current_benefit == 20_000
+    assert advice.gap == 1
+    assert advice.incremental_gain == 10_000
+    assert advice.action == "fill"
