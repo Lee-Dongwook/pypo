@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+
 class AgentEvaluator:
     def __init__(self, storage_dir: str = "data/trajectories") -> None:
         self.storage_dir = Path(storage_dir)

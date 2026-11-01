@@ -1,5 +1,6 @@
 import ast
-from typing import Tuple, List
+from typing import List, Tuple
+
 
 class _ConventionVisitor(ast.NodeVisitor):
     def __init__(self, forbidden_nodes: List[str]) -> None:

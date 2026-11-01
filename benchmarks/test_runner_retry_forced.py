@@ -1,13 +1,14 @@
 # benchmarks/test_runner_retry_forced.py
 import sys
 from pathlib import Path
+
 import requests
 
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(root_dir))
 
-from src.app.agents.runner import AgentRunner
-from src.app.agents.evaluation.evaluator import AgentEvaluator
+from src.app.agents.evaluation.evaluator import AgentEvaluator  # noqa: E402
+from src.app.agents.runner import AgentRunner  # noqa: E402
 
 _ATTEMPT_COUNTER = 0
 
@@ -46,8 +47,10 @@ def forced_retry_llm_generator(system_prompt: str, instruction: str) -> str:
 
         if raw_code.startswith("```"):
             lines = raw_code.splitlines()
-            if lines[0].startswith("```"): lines = lines[1:]
-            if lines and lines[-1].startswith("```"): lines = lines[:-1]
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
             raw_code = "\n".join(lines).strip()
 
         return raw_code

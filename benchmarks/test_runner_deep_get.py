@@ -1,12 +1,14 @@
 import sys
-import requests
 from pathlib import Path
+
+import requests
 
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(root_dir))
 
-from src.app.agents.runner import AgentRunner
-from src.app.agents.evaluation.evaluator import AgentEvaluator
+from src.app.agents.evaluation.evaluator import AgentEvaluator  # noqa: E402
+from src.app.agents.runner import AgentRunner  # noqa: E402
+
 
 def ollama_qwen_generator(system_prompt: str, instruction: str) -> str:
     url = "http://localhost:11434/api/generate"
@@ -59,12 +61,12 @@ def test_runner_deep_get(code_string: str) -> tuple[bool, str]:
             return False, "RuntimeError: 'deep_get' 함수가 정의되지 않았습니다."
 
         data = {"a": {"b": {"c": 42}}}
-        assert deep_get_func(data, "a.b.c") == 42, f"Case 1 Failed: expected 42"
+        assert deep_get_func(data, "a.b.c") == 42, "Case 1 Failed: expected 42"
 
-        assert deep_get_func(data, "a.b.x", default="N/A") == "N/A", f"Case 2 Failed: expected 'N/A'"
+        assert deep_get_func(data, "a.b.x", default="N/A") == "N/A", "Case 2 Failed: expected 'N/A'"
 
         data_with_none = {"a": {"b": None}}
-        assert deep_get_func(data_with_none, "a.b.c", default="safe") == "safe", f"Case 3 Failed: expected 'safe'"
+        assert deep_get_func(data_with_none, "a.b.c", default="safe") == "safe", "Case 3 Failed: expected 'safe'"
 
         return True, ""
 

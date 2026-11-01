@@ -1,12 +1,14 @@
 import sys
-import requests
 from pathlib import Path
+
+import requests
 
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(root_dir))
 
-from src.app.agents.runner import AgentRunner
-from src.app.agents.evaluation.evaluator import AgentEvaluator
+from src.app.agents.evaluation.evaluator import AgentEvaluator  # noqa: E402
+from src.app.agents.runner import AgentRunner  # noqa: E402
+
 
 def mock_llm_generator(system_prompt: str, instruction: str) -> str:
     """테스트를 위해 시뮬레이션된 LLM 응답 생성기."""

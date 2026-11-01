@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
 class MetricLogger:
     def __init__(self, storage_dir: str = "data/trajectories", filename: str = "success_trajectories.jsonl") -> None:
         self.storage_dir = Path(storage_dir)
