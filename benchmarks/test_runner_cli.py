@@ -1,4 +1,5 @@
 import sys
+import requests
 from pathlib import Path
 
 root_dir = Path(__file__).resolve().parent.parent
@@ -33,6 +34,49 @@ def mock_test_runner(code_string: str) -> tuple[bool, str]:
     except Exception as e:
         return False, f"ExecutionException: {str(e)}"
 
+def ollama_qwen_generator(system_prompt: str, instruction: str) -> str:
+    url = "http://localhost:11434/api/generate"
+
+    full_prompt = (
+        f"{system_prompt}\n\n"
+        f"### Request/Feedback:\n{instruction}\n\n"
+        "Rules:\n"
+        "1. 오직 실행 가능한 파이썬 코드만 작성하세요.\n"
+        "2. 마크다운 코드블록 백틱(```python 등)을 절대 포함하지 말고, 순수 코드 문자열만 출력하세요."
+    )
+
+    payload = {
+        "model": "qwen2.5-coder:7b",
+        "prompt": full_prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.1,  # 7B 모델 환각 방지 및 결정론적 출력 유도
+            "num_predict": 1024,
+        }
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=60)
+        response.raise_for_status()
+        result = response.json()
+        raw_code = result.get("response", "").strip()
+
+        if raw_code.startswith("```"):
+            lines = raw_code.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            raw_code = "\n".join(lines).strip()
+
+        return raw_code
+
+    except requests.exceptions.ConnectionError:
+        print("[Ollama Error] 로컬 Ollama 서버에 연결할 수 없습니다. 'ollama serve'가 실행 중인지 확인하세요.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[Ollama Error] API 호출 중 오류 발생: {str(e)}")
+        return ""
 
 def main():
     print("=" * 50)
@@ -50,7 +94,7 @@ def main():
         task_id=task_id,
         system_prompt=system_prompt,
         instruction=instruction,
-        generator_func=mock_llm_generator,
+        generator_func=ollama_qwen_generator,
         test_runner_func=mock_test_runner,
     )
 
