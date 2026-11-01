@@ -12,6 +12,10 @@ $body
 
 $references
 
+# 수정할 파일을 import하는 곳
+
+$importers
+
 # 수정할 파일 (현재 내용)
 
 $files

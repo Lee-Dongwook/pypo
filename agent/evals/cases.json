@@ -1,0 +1,37 @@
+[
+  {
+    "number": 2,
+    "kind": "테스트 추가",
+    "base": "bf571c41e330988b70c15072bf30ae4ec3c9c55b",
+    "title": "[pypo] /card/tier-analysis API 테스트 추가",
+    "body": "### 목표\n\n`POST /card/tier-analysis` 엔드포인트의 정상 응답을 API 테스트로 고정한다.\n\n### 수정할 파일\n\ntests/test_card_api.py\n\n### 완료 기준\n\n샘플 카탈로그의 `example-a`(30만/1.5만, 50만/2만, 100만/3만)로 다음을 확인하는 테스트가 있고 모두 통과한다.\n- `{\"spends\": {\"example-a\": 300000}}` 요청: 200, `analyses[0].next_threshold`는 500000, `remaining_spend_to_next_tier`는 200000, `incremental_cap_increase`는 5000\n- `{\"spends\": {\"example-a\": 1000000}}` 요청: 200, `analyses[0].is_top_tier`는 True\n- 실적이 음수면 422\n\n### 통과해야 할 테스트 (선택)\n\ntest_tier_analysis_api_reports_gap_to_next_tier\ntest_tier_analysis_api_marks_top_tier\ntest_tier_analysis_api_rejects_negative_spend\n\n### 하지 않을 것\n\n카탈로그에 없는 카드 ID(400)는 이미 `test_unknown_card_is_rejected_everywhere`가 확인하므로 다시 쓰지 않는다. `src/` 아래 코드는 수정하지 않는다."
+  },
+  {
+    "number": 3,
+    "kind": "정의 옮기기",
+    "base": "f096aac5ae315043f80fc0c275fc453d4d321ae1",
+    "title": "[pypo] PurchaseEvaluation 모델을 schemas.py로 옮기기",
+    "body": "### 목표\n\n`calculator.py`에 있는 `PurchaseEvaluation` 모델을 다른 모델들이 있는 `schemas.py`로 옮긴다.\n\n### 수정할 파일\n\nsrc/app/card/schemas.py\nsrc/app/card/calculator.py\nsrc/app/card/api.py\n\n### 완료 기준\n\n- `from src.app.card.schemas import PurchaseEvaluation`이 동작한다.\n- `calculator.py`에 `class PurchaseEvaluation`이 없고, `from pydantic import ...` import도 없다.\n- `api.py`는 `PurchaseEvaluation`을 `schemas`에서 가져온다.\n- `uv run ruff check .`와 `uv run pytest`가 모두 통과한다.\n\n### 통과해야 할 테스트 (선택)\n\ntest_purchase_evaluation_lives_in_schemas_and_api_imports_it_from_there\n\n### 하지 않을 것\n\n필드 이름, 타입, 기본값, 설명은 그대로 둔다. 동작을 바꾸지 않는다. 테스트 파일은 수정하지 않는다."
+  },
+  {
+    "number": 901,
+    "kind": "버그 수정",
+    "base": "80bc1f8636c9bbae07cc6dfc1cce042192066404",
+    "title": "잔여 할인한도가 약관 한도보다 크면 할인액이 약관 한도를 넘는다",
+    "body": "### 목표\n\n결제 한 건 평가(`evaluate_single_purchase`)에서 할인액이 잔여 한도와 약관 한도 중 작은 쪽을 넘지 않게 한다. 지금은 잔여 한도를 99,999원으로 넣으면 약관 한도(1만 원)를 넘는 할인이 나온다.\n\n### 수정할 파일\n\nsrc/app/card/calculator.py\n\n### 완료 기준\n\n- 잔여 한도 99,999원, 약관 한도 1만 원이면 할인액은 1만 원이다.\n- 잔여 한도 3,000원, 약관 한도 1만 원이면 할인액은 3,000원이다.\n\n### 통과해야 할 테스트 (선택)\n\ntest_remaining_cap_cannot_exceed_tier_cap\ntest_purchase_discount_is_capped_by_remaining_cap\n\n### 하지 않을 것\n\n테스트 파일은 수정하지 않는다. 다른 상태(ineligible, unsupported, insufficient_data) 판단은 바꾸지 않는다.\n"
+  },
+  {
+    "number": 902,
+    "kind": "검증 규칙 추가",
+    "base": "6980f424beaa10c9d1d9f427a7f29b7b117460e0",
+    "title": "카드별 실적이 1억 원을 넘으면 거부한다",
+    "body": "### 목표\n\nAPI 요청의 카드별 금액(`spends`, `remaining_caps`)이 1억 원을 넘으면 422로 거부한다. 1억 원은 이미 있는 `MAX_PLANNED_SPEND`다.\n\n### 수정할 파일\n\nsrc/app/card/api.py\n\n### 완료 기준\n\n- `spends`에 100,000,001원이 있으면 422이고, 에러 메시지에 `금액은 1억 원 이하여야 합니다: <카드 ID>`가 들어 있다.\n- 정확히 1억 원은 받아들인다.\n- 음수 거부(`금액은 0 이상이어야 합니다`)는 그대로 동작한다.\n\n### 통과해야 할 테스트 (선택)\n\ntest_spend_over_one_hundred_million_is_rejected\ntest_spend_of_exactly_one_hundred_million_is_accepted\n\n### 하지 않을 것\n\n테스트 파일은 수정하지 않는다. 새 상수를 만들지 않고 `MAX_PLANNED_SPEND`를 쓴다.\n"
+  },
+  {
+    "number": 903,
+    "kind": "이름 바꾸기",
+    "base": "06ba12402dbadd4267e8e683223a9ef36b16e009",
+    "title": "rank_purchase_evaluations를 rank_purchases로 이름 바꾸기",
+    "body": "### 목표\n\n`calculator.py`의 `rank_purchase_evaluations` 함수 이름을 `rank_purchases`로 바꾼다. 테스트는 이미 새 이름을 쓴다.\n\n### 수정할 파일\n\nsrc/app/card/calculator.py\nsrc/app/card/api.py\n\n### 완료 기준\n\n- `from src.app.card.calculator import rank_purchases`가 동작한다.\n- 옛 이름 `rank_purchase_evaluations`는 남지 않는다 (별칭도 두지 않는다).\n- `api.py`도 새 이름을 쓴다.\n\n### 통과해야 할 테스트 (선택)\n\ntest_ranking_puts_uncomputable_cards_last\ntest_ranking_has_one_public_name\n\n### 하지 않을 것\n\n동작을 바꾸지 않는다. 테스트 파일은 수정하지 않는다.\n"
+  }
+]

@@ -600,15 +600,36 @@ def test_move_line_cuts_a_definition_into_another_file_and_leaves_an_import(tmp_
     assert contents["lib/models.py"].endswith("class Circle:\n    r: int\n\n\nclass Box:\n    width: int\n")
 
 
-def test_rewriting_existing_definitions_is_rejected_with_a_move_hint(tmp_path: Path) -> None:
+def test_rewriting_a_definition_and_typing_it_into_another_file_is_rejected_with_a_move_hint(tmp_path: Path) -> None:
     (tmp_path / "shapes.py").write_text("class Box:\n    width: int\n", encoding="utf-8")
-    edits = workspace.parse_edits("=== FILE: shapes.py ===\nclass Box:\n    width: int\n\n\nclass New:\n    pass\n=== END ===")
+    edits = workspace.parse_edits(
+        "=== FILE: shapes.py ===\nclass Box:\n    width: int\n\n\nclass New:\n    pass\n=== END ===\n"
+        "=== FILE: models.py ===\nclass Box:\n    width: int\n=== END ==="
+    )
 
     problems = workspace.rewritten_definitions(tmp_path, edits)
 
     assert len(problems) == 1
     assert "Box" in problems[0] and "MOVE" in problems[0]
     assert "New" not in problems[0]
+
+
+def test_rewritten_whole_file_replaces_only_the_changed_definitions_in_place(tmp_path: Path) -> None:
+    original = (
+        "from __future__ import annotations\n\nfrom decimal import Decimal\n\nLIMIT = 3\n\n\n"
+        "def helper() -> int:\n    return 1\n\n\ndef cap(a: int, b: int) -> int:\n    return max(a, b)\n\n\n"
+        "def tail() -> Decimal:\n    return Decimal(LIMIT)\n"
+    )
+    (tmp_path / "calc.py").write_text(original, encoding="utf-8")
+    reply = (
+        "=== FILE: calc.py ===\n```python\nfrom __future__ import annotations\nfrom decimal import Decimal\n\n"
+        "LIMIT = 3\n\n\ndef helper() -> int:\n    return 1\n\n\ndef cap(a: int, b: int) -> int:\n    return min(a, b)\n"
+        "```\n=== END ==="
+    )
+    edits = workspace.parse_edits(reply)
+
+    assert workspace.rewritten_definitions(tmp_path, edits) == []
+    assert workspace.apply_edits(tmp_path, edits) == {"calc.py": original.replace("max(a, b)", "min(a, b)")}
 
 
 def test_delete_plus_retyped_copy_elsewhere_moves_the_original_instead(tmp_path: Path) -> None:
@@ -639,3 +660,83 @@ def test_move_also_fixes_imports_in_other_issue_files(tmp_path: Path) -> None:
     contents = workspace.apply_edits(tmp_path, edits, ("lib/shapes.py", "lib/models.py", "lib/draw.py"))
 
     assert contents["lib/draw.py"] == "from .shapes import area\nfrom .models import Box\n\nx = Box\n"
+
+
+def test_rename_line_renames_a_definition_and_its_uses_in_issue_files_but_not_strings(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "shapes.py").write_text('def area():\n    return "area"\n\n\nx = area()  # area\n')
+    (tmp_path / "lib" / "draw.py").write_text("from .shapes import area\n\ny = area()\n")
+    reply = (
+        "=== FILE: lib/shapes.py ===\nRENAME area TO surface\n"
+        "<<<<<<< SEARCH\nx = area()  # area\n=======\nx = area() + 1  # area\n>>>>>>> REPLACE\n=== END ==="
+    )
+
+    contents = workspace.apply_edits(tmp_path, workspace.parse_edits(reply), ("lib/shapes.py", "lib/draw.py"))
+
+    assert contents["lib/shapes.py"] == 'def surface():\n    return "area"\n\n\nx = surface() + 1  # area\n'
+    assert contents["lib/draw.py"] == "from .shapes import surface\n\ny = surface()\n"
+
+
+def test_renaming_onto_an_existing_name_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "shapes.py").write_text("def area():\n    pass\n\n\ndef size():\n    pass\n")
+    edits = workspace.parse_edits("=== FILE: shapes.py ===\nRENAME area TO size\n=== END ===")
+
+    with pytest.raises(workspace.EditError, match="size"):
+        workspace.apply_edits(tmp_path, edits)
+
+
+def test_missing_import_of_a_name_defined_once_in_src_is_added(tmp_path: Path) -> None:
+    (tmp_path / "src" / "app").mkdir(parents=True)
+    (tmp_path / "src" / "app" / "schemas.py").write_text("class Card:\n    pass\n")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True)
+
+    workspace.apply(tmp_path, {"tests/test_card.py": "def test_card():\n    assert Card and Unknown\n"})
+
+    assert (tmp_path / "tests" / "test_card.py").read_text().startswith("from src.app.schemas import Card\n")
+
+
+def test_common_errors_become_one_line_instructions_that_say_where_the_name_lives(tmp_path: Path) -> None:
+    (tmp_path / "src" / "app").mkdir(parents=True)
+    (tmp_path / "src" / "app" / "schemas.py").write_text("class Card:\n    pass\n")
+
+    assert workspace.explain(tmp_path, "E   ImportError: cannot import name 'Card' from 'src.app.calc' (/w/calc.py)") == [
+        "`src.app.calc`에는 `Card`가 없다. `Card`는 src/app/schemas.py에 있으니 거기서 import한다"
+    ]
+    assert "MOVE" in workspace.explain(tmp_path, "a.py:9:5: F811 [*] Redefinition of unused `Card` from line 2")[0]
+    assert workspace.explain(tmp_path, "AssertionError: 1 != 2") == []
+
+
+def test_files_importing_the_issue_files_are_shown_to_the_model(tmp_path: Path) -> None:
+    (tmp_path / "src" / "card").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "card" / "calc.py").write_text("def evaluate():\n    pass\n")
+    (tmp_path / "src" / "card" / "api.py").write_text("from .calc import evaluate\n")
+    (tmp_path / "tests" / "test_calc.py").write_text("from src.card.calc import evaluate\n")
+
+    assert workspace.importers(tmp_path, ("src/card/calc.py",)) == (
+        "src/card/api.py:1: from .calc import evaluate\ntests/test_calc.py:1: from src.card.calc import evaluate"
+    )
+
+
+def test_made_up_add_verb_is_read_as_a_plain_append() -> None:
+    edits = workspace.parse_edits("=== FILE: a.py ===\nADD from b import c\n\nx = c\n=== END ===")
+
+    assert edits == [workspace.Edit("a.py", "", "from b import c\n\nx = c\n")]
+
+
+def test_made_up_search_replace_arrow_line_renames_usages_in_that_file(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "calc.py").write_text("def rank_old():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "lib" / "api.py").write_text("from .calc import rank_old\n\nx = rank_old()\n", encoding="utf-8")
+    reply = (
+        "=== FILE: lib/calc.py ===\nRENAME rank_old TO rank_new\n=== END ===\n\n"
+        "=== FILE: lib/api.py ===\nSEARCH/REPLACE rank_old -> rank_new\n=== END ==="
+    )
+
+    contents = workspace.apply_edits(tmp_path, workspace.parse_edits(reply), ("lib/calc.py", "lib/api.py"))
+
+    assert contents == {
+        "lib/calc.py": "def rank_new():\n    return 1\n",
+        "lib/api.py": "from .calc import rank_new\n\nx = rank_new()\n",
+    }
