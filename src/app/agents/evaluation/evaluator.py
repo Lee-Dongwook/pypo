@@ -6,7 +6,6 @@ class AgentEvaluator:
     def __init__(self, storage_dir: str = "data/trajectories") -> None:
         self.storage_dir = Path(storage_dir)
         self.success_file = self.storage_dir / "success_trajectories.jsonl"
-        self.eval_runs_file = self.storage_dir / "evaluation_runs.jsonl"
     
     def load_success_trajectories(self) -> List[Dict[str, Any]]:
         if not self.success_file.exists():
@@ -26,6 +25,7 @@ class AgentEvaluator:
     def compute_metrics(self, total_benchmark_tasks: int = None) -> Dict[str, Any]:
         trajectories = self.load_success_trajectories()
         total_successes = len(trajectories)
+        base_tasks = max(total_benchmark_tasks, total_successes, 1)
 
         if total_successes == 0:
             return {
@@ -60,8 +60,6 @@ class AgentEvaluator:
             if not metrics.get("ast_passed", True):
                 ast_rejections += 1
 
-        base_tasks = total_benchmark_tasks if total_benchmark_tasks and total_benchmark_tasks >= total_successes else total_successes
-
         return {
             "total_evaluated_tasks": base_tasks,
             "total_successes": total_successes,
@@ -78,14 +76,14 @@ class AgentEvaluator:
         print("=" * 50)
         print(" Self-Evolving Code Agent - Evaluation Dashboard")
         print("=" * 50)
-        print(f" • 총 평가 대상 태스크: {metrics['total_evaluated_tasks']}개")
-        print(f" • 성공 완료 태스크:   {metrics['total_successes']}개")
+        print(f" • 총 평가 대상 태스크: {metrics.get('total_evaluated_tasks', 0)}개")
+        print(f" • 성공 완료 태스크:   {metrics.get('total_successes', 0)}개")
         print("-" * 50)
-        print(f" [1] Pass@1 (1차 성공률):       {metrics['pass_at_1_rate']:.1f}%")
-        print(f" [2] Retry Success (재시도 성공률): {metrics['retry_success_rate']:.1f}%")
-        print(f" [3] 평균 시도 이터레이션:        {metrics['avg_iterations']:.2f}회 / 성공")
-        print(f" [4] 회귀율 (Regression Rate):  {metrics['regression_rate']:.1f}%")
-        print(f" [5] AST 정적분석 차단율:       {metrics['ast_rejection_rate']:.1f}%")
+        print(f" [1] Pass@1 (1차 성공률):       {metrics.get('pass_at_1_rate', 0.0):.1f}%")
+        print(f" [2] Retry Success (재시도 성공률): {metrics.get('retry_success_rate', 0.0):.1f}%")
+        print(f" [3] 평균 시도 이터레이션:        {metrics.get('avg_iterations', 0.0):.2f}회 / 성공")
+        print(f" [4] 회귀율 (Regression Rate):  {metrics.get('regression_rate', 0.0):.1f}%")
+        print(f" [5] AST 정적분석 차단율:       {metrics.get('ast_rejection_rate', 0.0):.1f}%")
         print("=" * 50)
 
 if __name__ == "__main__":
