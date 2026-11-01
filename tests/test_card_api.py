@@ -162,3 +162,16 @@ def test_tier_analysis_api_rejects_negative_spend():
     )
 
     assert response.status_code == 422
+
+
+def test_optimize_without_cards_is_rejected():
+    response = client.post("/card/optimize", json={"spends": {}, "category": "cafe", "amount": 1000})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "실적을 입력한 카드가 하나 이상 필요합니다"
+
+def test_tier_analysis_without_cards_is_rejected():
+    response = client.post("/card/tier-analysis", json={"spends": {}})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "실적을 입력한 카드가 하나 이상 필요합니다"
