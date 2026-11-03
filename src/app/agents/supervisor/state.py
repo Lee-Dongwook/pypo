@@ -52,6 +52,8 @@ class SupervisorAgentState(MessagesState):
     skill_ids: list[str] | None
     ui: Annotated[list[AnyUIMessage], ui_message_reducer]
     values: dict[str, Any]
+    # 에이전트 노드가 파싱한 마지막 tool call. 도구 노드가 소비하고 None으로 되돌린다.
+    pending_action: NotRequired[dict[str, Any] | None]
 
 
 

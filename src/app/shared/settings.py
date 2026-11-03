@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     search_model: str = "openai:gpt-4.1-mini"
     # pypo (AI 동료, docs/DEVBOT.md)가 쓰는 모델. 기본은 로컬 Ollama라 비용이 0원이다.
     devbot_model: str = "ollama:qwen2.5-coder:7b"
+    # hermes(범용 자율 에이전트)가 쓰는 모델. 기본은 로컬 Ollama라 비용이 0원이다.
+    hermes_model: str = "ollama:qwen2.5-coder:7b"
 
     database_url: str = "postgresql+psycopg://pypo:pypo@localhost:5432/pypo"
     redis_url: str = "redis://localhost:6379/0"
