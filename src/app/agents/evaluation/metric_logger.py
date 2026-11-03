@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +20,7 @@ class MetricLogger:
         metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
         record = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "task_id": task_id,
             "status": "SUCCESS",
             "system_prompt": system_prompt,
@@ -38,9 +38,3 @@ class MetricLogger:
 
         with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-def log_evaluation_run(self, run_summary: Dict[str, Any]) -> None:
-    eval_file = self.storage_dir / "evaluation_runs.jsonl"
-    record = {"timestamp": datetime.utcnow().isoformat() + "Z", **run_summary}
-    with open(eval_file, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
